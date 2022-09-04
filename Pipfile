@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+fastapi = "*"
+uvicorn = "*"
+motor = "*"
+pydantic = "*"
+transformers = "4.21.1"
+torch = "1.12.1"
+sentence-transformers = "2.2.2" 
+fastapi-utils = "*"
+fastapi-auth-middleware = "*"
+labelatorio = "1.2.0"
+fastapi-oidc = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.9"

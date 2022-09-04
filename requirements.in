@@ -1,0 +1,19 @@
+# .env
+python-dotenv
+
+# app
+fastapi
+uvicorn
+ujson
+email_validator
+python-multipart
+motor
+aiofiles
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic
+transformers
+torch
+sentence-transformers==2.2.2
+fastapi-utils
+labelatorio==0.2.0rc1
