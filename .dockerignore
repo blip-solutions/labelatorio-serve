@@ -1,0 +1,6 @@
+.env
+models_cache
+# python stuff
+__pycache__/
+app/cofig/
+.vscode
