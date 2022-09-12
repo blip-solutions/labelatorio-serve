@@ -155,7 +155,7 @@ async def refresh(request:Request):
     configuration_client.ping()
 
 @app.on_event("startup")
-#@repeat_every(seconds=1*60)  # 1 minutes
+@repeat_every(seconds=1*60)  # 1 minutes
 def schedule():
     print("Scheduled ping")
     configuration_client.ping()
