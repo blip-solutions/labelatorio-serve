@@ -12,6 +12,7 @@ class RoutingSetting(BaseModel):
     rule_type:str
     handling:str #manual | model-review | model-auto
     similarity_range:Optional[FloatRange] = None
+    predicted_labels:Optional[List[str]] = None
     prediction_score_range:Optional[FloatRange] = None
 
 

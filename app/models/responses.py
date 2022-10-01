@@ -26,8 +26,15 @@ class Prediction(BaseModel):
     label:str
     score:float
 
+class PredictionMatchExplanation(BaseModel):
+    prediction:Prediction
+    matched:bool
 
-
+class SimilarExample(BaseModel):
+    text:str
+    score:float
+    labels:List[str]
+    correctly_predicted:bool
 
 class RouteExplanation(BaseModel):
     route_id:int
@@ -35,11 +42,10 @@ class RouteExplanation(BaseModel):
     route_handling:str
     matched:bool
     used:bool
+    matched_prediction:Optional[List[PredictionMatchExplanation]]
     matched_similar:Optional[bool]
-    matched_prediction_score:Optional[bool]
-    matched_similar_example:Optional[str]
-    matched_similarity_score:Optional[float]
-    matched_correct_prediction:Optional[bool]
+    matched_similar_example:Optional[SimilarExample]
+    #matched_correct_prediction:Optional[bool]
     
 
 
