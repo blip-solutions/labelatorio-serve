@@ -10,7 +10,7 @@ WORKDIR /app
 COPY requirements.txt  .
 RUN pip3 install -r requirements.txt
 FROM labelatorio-serving-torch AS labelatorio-serving-requirements
-RUN pip3 install labelatorio==0.2.0
+
 
 COPY . /app
 EXPOSE 80
@@ -20,4 +20,5 @@ ENV BUILD_VERSION=$build_version
 
 # If running alone (when you dont want /api prefix) remove "--root-path" and "/api" from below command  
 ENTRYPOINT ["uvicorn", "--host", "0.0.0.0", "--port", "80", "main:app"]
+#CMD exec gunicorn --bind :80--workers 1 --threads 8 --timeout 0 main:app
 

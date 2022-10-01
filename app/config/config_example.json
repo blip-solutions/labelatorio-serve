@@ -4,6 +4,7 @@
     "LABELATORIO_API_TOKEN": "your-api-token" ,
     "MAX_CONNECTIONS_COUNT": 10,
     "MIN_CONNECTIONS_COUNT": 4,
-    "ALLOWED_HOSTS": ["*"]
+    "ALLOWED_HOSTS": ["*"],
+    "DISABLED_AUTH": false
     
 }

@@ -15,8 +15,9 @@ from fastapi_auth_middleware import AuthMiddleware
 from .models.configuration import NodeAuthorization
 from .core.predictions import PredictionModule
 from .models.responses import Info
-from  .config import ALLOWED_HOSTS, ROOT_PATH, SERVICE_ACCESS_TOKEN
-from .core import router as core_router
+from  .config import ALLOWED_HOSTS, ROOT_PATH, SERVICE_ACCESS_TOKEN, DISABLED_AUTH
+from .core.predictions_controller import router as predictions_router
+from .core.errors_controller import router as errors_router
 from .utils.error_handlers import http_error_handler, http_422_error_handler
 from .core.configuration import configuration_client
 from fastapi import Request
@@ -35,6 +36,7 @@ else:
     docs_servers=None
 
 version="0.1." +  os.environ["BUILD_VERSION"] if "BUILD_VERSION" in os.environ else  "_dev_"
+print(version)
 
 app = FastAPI(
     servers=docs_servers,
@@ -68,13 +70,18 @@ app.state.prediction_module = PredictionModule(configuration_client)
 configuration_client.on_config_change(lambda : app.state.prediction_module.reinitialize())
 app.state.configuration_client = configuration_client
 
-def build_auth():
+
+def build_auth():    
+    if DISABLED_AUTH:
+        print("WARNING: DISABLED_AUTH=True... Overrides node settings! This is not recomeneded and dangerous !") 
+        app.state.authenticate_user=lambda x: ["authenticated", "control_access"] 
+        return
 
     if (app.state.configuration_client.settings and 
         app.state.configuration_client.settings.authorization):
         auth_settings:NodeAuthorization = app.state.configuration_client.settings.authorization
         if auth_settings.enable_public_access:
-            app.state.authenticate_user=lambda : ["authenticated", "control_access"] 
+            app.state.authenticate_user=lambda x: ["authenticated", "control_access"] 
         if auth_settings.auth_method=="OIDC":
                 
 
@@ -105,8 +112,9 @@ def build_auth():
                 return  ["control_access"] if SERVICE_ACCESS_TOKEN==headers.get("access_token") else None
 
         app.state.authenticate_user= no_auth
-                
+
 build_auth()
+
 configuration_client.on_config_change(build_auth)
 
 
@@ -144,19 +152,19 @@ app.add_exception_handler(
     HTTP_422_UNPROCESSABLE_ENTITY, http_422_error_handler)
 
 # add routers
-app.include_router(core_router)
+app.include_router(predictions_router)
+app.include_router(errors_router)
 
 
 
 @app.post("/refresh")
 @requires(['control_access'])
 async def refresh(request:Request):
-    print("refresh refresh")
+    print("Reqested refresh")
     configuration_client.ping()
 
 @app.on_event("startup")
 @repeat_every(seconds=1*60)  # 1 minutes
 def schedule():
-    print("Scheduled ping")
     configuration_client.ping()
 

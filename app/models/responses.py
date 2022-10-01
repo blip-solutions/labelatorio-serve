@@ -52,3 +52,5 @@ class PredictedItem(BaseModel):
 
 class PredictctRespone(BaseModel):
     predictions:List[PredictedItem]
+
+

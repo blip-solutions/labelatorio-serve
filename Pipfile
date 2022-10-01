@@ -13,8 +13,11 @@ torch = "1.12.1"
 sentence-transformers = "2.2.2" 
 fastapi-utils = "*"
 fastapi-auth-middleware = "*"
-labelatorio = "1.2.0"
+labelatorio = "==0.2.2"
 fastapi-oidc = "*"
+install = "*"
+persist-queue = "*"
+gunicorn = "*"
 
 [dev-packages]
 

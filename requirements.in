@@ -16,4 +16,6 @@ transformers
 torch
 sentence-transformers==2.2.2
 fastapi-utils
-labelatorio==0.2.0rc1
+labelatorio==0.2.2
+persist-queue 
+gunicorn

@@ -1,7 +1,9 @@
+from datetime import datetime
 from email.policy import default
 import functools
 import os
 from pickle import FALSE
+from datetime import timezone
 from typing import List, Optional, Union
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
@@ -19,7 +21,8 @@ from ..models.requests import PredictionRequestRecord
 from ..models.responses import PredictedItem, Prediction, RouteExplanation
 from  .configuration import NodeConfigurationClient 
 from  .contants import NodeStatusTypes, RouteRuleType, RouteHandlingTypes
-
+import persistqueue
+import logging
 class OptionTypes:
     pipeline_task = "pipeline_task"
     pipeline_kwargs =  "pipeline_kwargs"
@@ -129,6 +132,8 @@ class PredictionModule:
         
         self.configurationClient=configurationClient
 
+        self.backlog_queue= persistqueue.SQLiteQueue('queues/backlog_queue', auto_commit=True, multithreading=True)
+        self.errors_queue= persistqueue.SQLiteQueue('queues/error_queue.db', auto_commit=True, multithreading=True)
 
         self.labelatorio_client = self.configurationClient.labelatorio_client
         self.model_anchor_vectors={}
@@ -137,6 +142,14 @@ class PredictionModule:
         self.memory_cache={}
         self.reinitialize()
         self.configuration_error=None
+        if self.backlog_queue.size>0:
+            logging.warning(f"backlog_queue not empty ({self.backlog_queue.size}). Flushing now!")
+            try:
+                self.flush_send_to_backlog()
+            except Exception as ex:
+                logging.info("Error during flushing on init")
+                logging.exception(ex)
+                
 
     
 
@@ -195,7 +208,7 @@ class PredictionModule:
             print(f"download {model_name} finished")
 
 
-    def predict_labels(self, background_tasks:BackgroundTasks, data:Union[List[str], List[PredictionRequestRecord]], model_name:Optional[str], explain:Optional[bool]=None, test:Optional[bool]=False)->PredictedItem:
+    def predict_labels(self, background_tasks:BackgroundTasks, data_to_send:Union[List[str], List[PredictionRequestRecord]], model_name:Optional[str], explain:Optional[bool]=None, test:Optional[bool]=False)->PredictedItem:
         if self.configuration_error:
             raise HTTPException(520,{"error":f"Configuration error: {self.configuration_error}"})
         if not self.configurationClient.settings.models:
@@ -208,10 +221,10 @@ class PredictionModule:
         if not settings:
             raise HTTPException(520,{"error":f"Model {model_name} is not deployed on this node"})
 
-        if not data:
+        if not data_to_send:
             return None
 
-        text2dataMap =  {text:text for text in data} if isinstance(data[0],str) else {rec.text:rec for rec in data}
+        text2dataMap =  {text:text for text in data_to_send} if isinstance(data_to_send[0],str) else {rec.text:rec for rec in data_to_send}
         
 
 
@@ -224,6 +237,9 @@ class PredictionModule:
         texts_to_handle = list(set(text2dataMap.keys()))
 
         texts_routes_matches=[None for i in range(len(texts_to_handle))]
+        
+        query_vectors=None
+
         if settings.routing:
             correctly_predicted_min_range = min((route.similarity_range.min for route in settings.routing if route.rule_type==RouteRuleType.TRUE_POSITIVES), default=None)
             
@@ -340,9 +356,9 @@ class PredictionModule:
 
         
 
-
+        to_backlog={}
         result:List[PredictedItem] = []
-        for text,rec in text2dataMap.items():
+        for i, (text,rec) in enumerate(text2dataMap.items()):
             handling = text_handled_routes[text].handling if text in text_handled_routes else settings.default_handling
             if handling==RouteHandlingTypes.MANUAL:
                 prediction_objects=None
@@ -354,20 +370,28 @@ class PredictionModule:
             add_to_backlog=False
             if not test and handling==RouteHandlingTypes.MANUAL or handling==RouteHandlingTypes.MODEL_REVIEW:
                 add_to_backlog=True
-                to_backlog=[]
 
+            reviewProjectId=settings.project_id
             if isinstance(rec, PredictionRequestRecord):
                 predictionItem.key=rec.key
                 if add_to_backlog:
                     backlog_payload = rec.dict()
+                    if "reviewProjectId" in backlog_payload:
+                        reviewProjectId = backlog_payload.pop("reviewProjectId") or settings.project_id # becasue reviewProjectId can be there but still null
             else:
                 if add_to_backlog:
                     backlog_payload = {"text":rec}
 
+            if add_to_backlog and query_vectors is not None:
+                backlog_payload["vector"]=query_vectors[i].tolist()
+
             if add_to_backlog:
                 if prediction_objects:
                     backlog_payload["predicted_labels"]=[pred.label for pred in prediction_objects ]
-                to_backlog.append(backlog_payload)
+                if not reviewProjectId in to_backlog:
+                    to_backlog[reviewProjectId]=[backlog_payload]
+                else:
+                    to_backlog[reviewProjectId].append(backlog_payload)
 
 
             if explain:
@@ -375,8 +399,14 @@ class PredictionModule:
 
             result.append(predictionItem)
 
-        if not test and add_to_backlog and to_backlog:
-            background_tasks.add_task(PredictionModule.send_to_backlog, self, settings.project_id, to_backlog)
+        if not test and add_to_backlog:
+            has_backlog_items=False
+            for project_id, backlog_items in to_backlog.items():
+                if data_to_send:
+                    has_backlog_items=True
+                    self.backlog_queue.put((project_id, backlog_items))
+            if has_backlog_items:
+                background_tasks.add_task(PredictionModule.flush_send_to_backlog, self)
                 
 
 
@@ -414,8 +444,26 @@ class PredictionModule:
         self.memory_cache[cache_key] =  SentenceTransformer(result_model_path)
         return self.memory_cache[cache_key]
 
-    async def send_to_backlog(self, project_id, docs: List):
-        self.labelatorio_client.documents.add_documents(project_id, docs, upsert=True)
+    async def flush_send_to_backlog(self):
+        
+        while True:
+            try:
+                (project_id, docs) = self.backlog_queue.get(block=False)
+            except persistqueue.Empty:
+                break
+
+            try:
+                print(f"{project_id}>> {docs}")
+                res = self.labelatorio_client.documents.add_documents(project_id, docs, upsert=True)
+                print(f"{project_id} << {res}")
+
+            except Exception as ex:
+                self.errors_queue.put({"docs":docs, "project_id":project_id, "error":str(ex), "counter":1, "timestamp":datetime.now(timezone.utc)})
+                print(ex)
+                logging.exception(ex)
+        
+        
+
 
 
 
@@ -465,10 +513,13 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
         final_result=[]
         for subresult in result:
             if correctly_predicted and result:
-                for rec in subresult: 
-                    #todo - handle cases when predictions wasnt apllied yet
-                    rec["correctly_predicted"] = set(rec["labels"])==set(rec["predicted_labels"]) if "predicted_labels" in rec and rec["predicted_labels" ] else False
-                    final_result.append(rec)
+                if subresult:
+                    for rec in subresult: 
+                        #todo - handle cases when predictions wasnt apllied yet
+                        rec["correctly_predicted"] = set(rec["labels"])==set(rec["predicted_labels"]) if "predicted_labels" in rec and rec["predicted_labels" ] else False
+                        final_result.append(rec)
+                else:
+                    final_result.append(None)
                 # correct_res = [rec for rec in subresult if rec["labels"]==rec["predicted_labels"]]
                 # if len(correct_res)==len(subresult) and len(subresult)>0:
                 #     final_result.append( correct_res[0] )

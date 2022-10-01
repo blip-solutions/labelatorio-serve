@@ -43,3 +43,4 @@ ROOT_PATH = try_get_config("ROOT_PATH",required=False)
 SERVICE_ACCESS_TOKEN =  try_get_config("SERVICE_ACCESS_TOKEN",required=False)  #this is for internal use of managed nodes
 
 
+DISABLED_AUTH = try_get_config("DISABLED_AUTH",default=False)

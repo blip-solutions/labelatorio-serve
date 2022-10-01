@@ -2,4 +2,5 @@
     "MAX_CONNECTIONS_COUNT": 10,
     "MIN_CONNECTIONS_COUNT": 4,
     "ALLOWED_HOSTS": ["*"]
+    
 }

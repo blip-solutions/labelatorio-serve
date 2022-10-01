@@ -2,9 +2,9 @@ import functools
 import logging
 import os
 from typing import Callable, Optional, Union
-from labelatorio import Client
 from labelatorio.client import EndpointGroup
 from ..models.configuration import NodeSettings
+from labelatorio import Client
 from ..config import NODE_NAME, LABELATORIO_API_TOKEN, LABELATORIO_URL, SERVICE_ACCESS_TOKEN
 from .contants import NodeStatusTypes
 

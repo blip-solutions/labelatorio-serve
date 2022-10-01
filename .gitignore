@@ -3,3 +3,4 @@ models_cache
 _deployment.md
 .DS_Store
 .vscode
+queues/*
