@@ -226,7 +226,7 @@ class PredictionModule:
         if not data_to_send:
             return None
 
-        text2dataMap =  {text:text for text in data_to_send} if isinstance(data_to_send[0],str) else {rec.text:rec for rec in data_to_send}
+        uniqueTexts =  {text for text in data_to_send} if isinstance(data_to_send[0],str) else {rec.text for rec in data_to_send}
         
 
 
@@ -236,7 +236,7 @@ class PredictionModule:
             max_similarity=None
             max_sim_anchor_index=None
         #ignore duplicates
-        texts_to_handle = list(set(text2dataMap.keys()))
+        texts_to_handle = list(uniqueTexts)
 
         texts_routes_matches=[None for i in range(len(texts_to_handle))]
         
@@ -393,7 +393,12 @@ class PredictionModule:
 
         to_backlog={}
         result:List[PredictedItem] = []
-        for i, (text,rec) in enumerate(text2dataMap.items()):
+        for rec in data_to_send:
+            if isinstance(rec,str):
+                text = rec
+            else:
+                text = rec.text
+
             handling = text_handled_routes[text].handling if text in text_handled_routes else settings.default_handling
             if handling==RouteHandlingTypes.MANUAL:
                 prediction_objects=None
@@ -418,6 +423,7 @@ class PredictionModule:
                     backlog_payload = {"text":rec}
 
             if add_to_backlog and query_vectors is not None:
+                i = texts_to_handle.index(text)
                 backlog_payload["vector"]=query_vectors[i].tolist()
 
             if add_to_backlog:
