@@ -26,6 +26,10 @@ class Prediction(BaseModel):
     label:str
     score:float
 
+# class Answer(BaseModel):
+#     answer:str
+#     score:float
+
 class PredictionMatchExplanation(BaseModel):
     prediction:Prediction
     matched:bool
@@ -33,8 +37,8 @@ class PredictionMatchExplanation(BaseModel):
 class SimilarExample(BaseModel):
     text:str
     score:float
-    labels:List[str]
-    correctly_predicted:bool
+    labels:Optional[List[str]]
+    correctly_predicted:Optional[bool]
 
 class RouteExplanation(BaseModel):
     route_id:int
@@ -50,6 +54,7 @@ class RouteExplanation(BaseModel):
 
 
 class PredictedItem(BaseModel):
+    #predicted:Union[List[Prediction],Answer, None]
     predicted:Union[List[Prediction], None]
     handling:str
     key:Optional[str]=None

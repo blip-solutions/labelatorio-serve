@@ -21,6 +21,7 @@ from transformers.pipelines import Pipeline
 from app.models.configuration import RoutingSetting
 from ..models.requests import PredictionRequestRecord
 from ..models.responses import PredictedItem, Prediction, PredictionMatchExplanation, RouteExplanation, SimilarExample
+#from ..models.responses import Answer
 from  .configuration import NodeConfigurationClient 
 from  .contants import NodeStatusTypes, RouteRuleType, RouteHandlingTypes
 import persistqueue
@@ -179,10 +180,12 @@ class PredictionModule:
                     
 
                     print("preparing anchors")
-                    for route in modelConfig.routing:
+                    for route_id, route in enumerate(modelConfig.routing):
                         if route.rule_type==RouteRuleType.ANCHORS:
                             similarity_model=self.get_similarity_model(modelConfig.similarity_model)
-                            self.model_anchor_vectors[modelConfig.model_name] =similarity_model.encode(route.anchors,  normalize_embeddings=True)
+                            if self.model_anchor_vectors.get(modelConfig.model_name) is None:
+                                self.model_anchor_vectors[modelConfig.model_name]={}
+                            self.model_anchor_vectors[modelConfig.model_name][route_id] =similarity_model.encode(route.anchors,  normalize_embeddings=True)
                 
                 if self.default_model: #preload default models into memory
                     self.get_pipeline(self.default_model, self.configurationClient.settings.get_model(self.default_model).task_type)  #preload into memory
@@ -295,10 +298,8 @@ class PredictionModule:
                             
                     elif route.rule_type==RouteRuleType.ANCHORS:
                         #get vector1
-                       
-                        
-                        
-                        for anchor_index, anchor_vec in enumerate(self.model_anchor_vectors[model_name]):
+
+                        for anchor_index, anchor_vec in enumerate(self.model_anchor_vectors[model_name][route_id]):
                             similarity = (np.dot(query_vectors[i],anchor_vec)+1)/2
                             
                             if explain and (not max_similarity or similarity>max_similarity):
@@ -318,8 +319,7 @@ class PredictionModule:
                                     used=False,
                                     matched_prediction=None,
                                     matched_similar=True if route in matched_routes else False, 
-                                    matched_similar_example=route.anchors[max_sim_anchor_index],
-                                    matched_similarity_score=max_similarity
+                                    matched_similar_example=SimilarExample(text=route.anchors[max_sim_anchor_index], score=max_similarity)
                                  )
                                 
                             
@@ -369,7 +369,7 @@ class PredictionModule:
                         matched_prediction_score=False
                         prediciton_matches=[]
                         for prediction in predictions[text]:
-                            matched=(  (prediction["label"] in route.predicted_labels or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  )
+                            matched=(  (prediction["label"] in route.predicted_labels or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  ) if route.predicted_labels else False
                             if matched and closest:
                                 #if matched and closses to correctly predicted is also part of the matchin, we test also if label is the same as the clossest doc
                                 matched= prediction["label"] in closest[i]["labels"]
@@ -454,7 +454,101 @@ class PredictionModule:
         return result
                 
 
-    
+    def get_answer(self, background_tasks:BackgroundTasks, questions:Union[List[str], List[PredictionRequestRecord]], model_name:Optional[str], explain:Optional[bool]=None, test:Optional[bool]=False):
+        if self.configuration_error:
+            raise HTTPException(520,{"error":f"Configuration error: {self.configuration_error}"})
+        # if not self.configurationClient.settings.models:
+        #     raise HTTPException(520,{"error":"No models are defined for this node"})
+        # if not model_name:
+        #     model_name = self.configurationClient.settings.default_model or self.configurationClient.settings.models[0].model_name
+        
+        settings =  self.configurationClient.settings.get_model(model_name or "") 
+        
+        uniqueTexts =  {text for text in questions} if isinstance(questions[0],str) else {rec.text for rec in questions}
+        
+     
+        texts_to_handle = list(uniqueTexts)
+
+        correctly_predicted_min_range = min((route.similarity_range.min for route in settings.routing if route.rule_type==RouteRuleType.TRUE_POSITIVES), default=None)
+
+        query_vectors = self.get_similarity_model(settings.similarity_model).encode(texts_to_handle, normalize_embeddings=True)
+        
+        closest = self.closest.get_closest(
+                    settings.project_id, 
+                    query_vectors=query_vectors,
+                     min_score=correctly_predicted_min_range/100 if not explain else 0, 
+                     select_fields=["id", "answer"] ,
+                     answered=True )
+        
+        unique_results={}
+        for i, closest_correctly_predicted in enumerate(closest):
+            handling=settings.default_handling
+            answer=None
+            if closest_correctly_predicted and closest_correctly_predicted["answer"]:
+                answer=closest_correctly_predicted["answer"]
+                for route in settings.routing:
+                    if closest_correctly_predicted and closest_correctly_predicted["score"]*100>=route.similarity_range.min and closest_correctly_predicted["score"]*100<=route.similarity_range.max:
+                        handling=route.handling
+                        break
+            
+            
+            unique_results[texts_to_handle[i]]=(
+                    Answer(answer=answer, score=closest_correctly_predicted["score"] ) if answer and handling!=RouteHandlingTypes.MANUAL else None,
+                    handling if answer else RouteHandlingTypes.MANUAL 
+            )
+                
+        predictions=[] 
+        to_backlog={}
+        has_backlog_items=False
+        for rec in questions:
+            if isinstance(rec,str):
+                text = rec
+            else:
+                text = rec.text
+            
+            (answer, handling) = unique_results[text]
+
+            predictionItem= PredictedItem(predicted=answer, handling=handling)
+            predictions.append(predictionItem)
+              
+
+            if not test and handling==RouteHandlingTypes.MANUAL or handling==RouteHandlingTypes.MODEL_REVIEW:
+                add_to_backlog=True
+            else:
+                add_to_backlog=False
+
+            reviewProjectId=settings.project_id
+            if isinstance(rec, PredictionRequestRecord):
+                predictionItem.key=rec.key
+                if add_to_backlog:
+                    backlog_payload = rec.dict()
+                    if "reviewProjectId" in backlog_payload:
+                        reviewProjectId = backlog_payload.pop("reviewProjectId") or settings.project_id # becasue reviewProjectId can be there but still null
+            else:
+                if add_to_backlog:
+                    backlog_payload = {"text":rec}
+
+            if add_to_backlog and query_vectors is not None:
+                i = texts_to_handle.index(text)
+                backlog_payload["vector"]=query_vectors[i].tolist()
+
+            if add_to_backlog:
+                if not reviewProjectId in to_backlog:
+                    to_backlog[reviewProjectId]=[backlog_payload]
+                else:
+                    to_backlog[reviewProjectId].append(backlog_payload)
+
+        if not test and add_to_backlog:
+            has_backlog_items=False
+            for project_id, backlog_items in to_backlog.items():
+                    has_backlog_items=True
+                    self.backlog_queue.put((project_id, backlog_items))
+        if has_backlog_items:
+            background_tasks.add_task(PredictionModule.flush_send_to_backlog, self)
+
+        return  predictions
+
+
     def get_pipeline(self,  model_name_or_id:str, task_type:str )->Pipeline:
         cache_key=f"get_pipeline.{model_name_or_id}"
         if cache_key in self.memory_cache:
@@ -518,7 +612,10 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
     def __init__(self, client: Client) -> None:
         super().__init__(client)    
 
-    def get_closest(self,project_id, query_vectors, select_fields:List, min_score, correctly_predicted=True) -> List[dict]:
+    def get_closest(self,project_id, query_vectors, select_fields:List, min_score, 
+            correctly_predicted=None,
+            answered=None
+            ) -> List[dict]:
         """Get project by it's id
 
         Args:
@@ -538,6 +635,9 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
             if "id" not in select_fields:
                 select_fields.append("id")
             filter={"min_score":min_score}
+        
+        if answered:
+            filter["answer"] ="!null"
 
         payload = {
             "query_vectors":[list( float(s) for s in vec) for vec in query_vectors],
@@ -567,6 +667,6 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
                 # else:
                 #     final_result.append(None)
             else:
-                final_result.append(next(subresult, None))
+                final_result.append(next(iter(subresult), None))
         return final_result
         
