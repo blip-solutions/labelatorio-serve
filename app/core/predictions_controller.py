@@ -35,3 +35,10 @@ async def predict_default(background_tasks: BackgroundTasks, request: Request,  
     return PredictctRespone(predictions=result)
 
         
+
+# @router.post("/get-answer", response_model=PredictctRespone, response_model_exclude_none=True)
+# @requires(['authenticated'])
+# async def get_answer(background_tasks: BackgroundTasks, request: Request,  body:PredictRequestBody, explain:Optional[bool]=False, test:Optional[bool]=False)->Info:
+#     print(body)
+#     result = request.app.state.prediction_module.get_answer(background_tasks,body.texts, model_name=None, explain=explain, test=test)
+#     return PredictctRespone(predictions=result)

@@ -214,6 +214,7 @@ class PredictionModule:
 
 
     def predict_labels(self, background_tasks:BackgroundTasks, data_to_send:Union[List[str], List[PredictionRequestRecord]], model_name:Optional[str], explain:Optional[bool]=None, test:Optional[bool]=False)->PredictedItem:
+
         if self.configuration_error:
             raise HTTPException(520,{"error":f"Configuration error: {self.configuration_error}"})
         if not self.configurationClient.settings.models:
@@ -221,7 +222,7 @@ class PredictionModule:
         if not model_name:
             model_name = self.configurationClient.settings.default_model or self.configurationClient.settings.models[0].model_name
         
-
+        pipe=None
         settings =  self.configurationClient.settings.get_model(model_name)
         if not settings:
             raise HTTPException(520,{"error":f"Model {model_name} is not deployed on this node"})
@@ -256,7 +257,7 @@ class PredictionModule:
                     settings.project_id, 
                     query_vectors=query_vectors,
                      min_score=correctly_predicted_min_range/100 if not explain else 0, 
-                     select_fields=["id"] if not explain else ["id", "text"] ,
+                     select_fields=["id", "text"] ,
                      correctly_predicted=True )
             
             for i, text2handle in enumerate(texts_to_handle):
@@ -275,6 +276,13 @@ class PredictionModule:
 
                     if route.rule_type==RouteRuleType.TRUE_POSITIVES:
                         
+                        if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] is None:
+                            # if no prediction was made yet we need to run it our self
+                            pipe = self.get_pipeline(model_name, settings.task_type) 
+                            predictions= set(p["label"] for p in pipe(closest_correctly_predicted["text"], padding=True, truncation=True)[0] if p["score"]>0.5)
+                            if set(closest_correctly_predicted["labels"])==predictions:
+                                closest_correctly_predicted["correctly_predicted"]=True
+
                         if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] and closest_correctly_predicted["score"]*100>=route.similarity_range.min and closest_correctly_predicted["score"]*100<=route.similarity_range.max:
                             matched_routes.append( route)
 
@@ -298,9 +306,10 @@ class PredictionModule:
                             
                     elif route.rule_type==RouteRuleType.ANCHORS:
                         #get vector1
-
+                        max_similarity=None
+                        max_sim_anchor_index=None
                         for anchor_index, anchor_vec in enumerate(self.model_anchor_vectors[model_name][route_id]):
-                            similarity = (np.dot(query_vectors[i],anchor_vec)+1)/2
+                            similarity = round((np.dot(query_vectors[i],anchor_vec)+1)/2,3)
                             
                             if explain and (not max_similarity or similarity>max_similarity):
                                 max_similarity =similarity
@@ -319,7 +328,7 @@ class PredictionModule:
                                     used=False,
                                     matched_prediction=None,
                                     matched_similar=True if route in matched_routes else False, 
-                                    matched_similar_example=SimilarExample(text=route.anchors[max_sim_anchor_index], score=max_similarity)
+                                    matched_similar_example=SimilarExample(text=route.anchors[max_sim_anchor_index], score=max_similarity) if max_sim_anchor_index is not None else None
                                  )
                                 
                             
@@ -333,7 +342,8 @@ class PredictionModule:
         else:
             texts_to_predict = [text for  text, matched_routes in zip(texts_to_handle,texts_routes_matches) if  any(1 for route in matched_routes if RouteHandlingTypes.should_predict(route.handling) ) ]
         if texts_to_predict:
-            pipe = self.get_pipeline(model_name, settings.task_type)
+            if pipe is None:
+                pipe = self.get_pipeline(model_name, settings.task_type) 
             predictions= {text:doc_predictions  for text, doc_predictions in zip(texts_to_predict,pipe(texts_to_predict, padding=True, truncation=True))}
         else:
             predictions={}
@@ -350,7 +360,7 @@ class PredictionModule:
                             else:
                                 predictions_to_test= [prediction for prediction in predictions[text] if prediction["label"] in route.predicted_labels]
                         else:
-                            predictions_to_test=predictions[text]
+                            predictions_to_test=predictions.get(text) or []
 
                         if any(1 for prediction in predictions_to_test if prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  and  ((closest and prediction["label"] in closest[i]["labels"]) or not closest) ):
                             text_handled_routes[text] = route
@@ -657,7 +667,7 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
                 if subresult:
                     for rec in subresult: 
                         #todo - handle cases when predictions wasnt apllied yet
-                        rec["correctly_predicted"] = set(rec["labels"])==set(rec["predicted_labels"]) if "predicted_labels" in rec and rec["predicted_labels" ] else False
+                        rec["correctly_predicted"] = set(rec["labels"])==set(rec["predicted_labels"]) if "predicted_labels" in rec and rec["predicted_labels" ] else None
                         final_result.append(rec)
                 else:
                     final_result.append(None)
