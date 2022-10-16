@@ -353,10 +353,10 @@ class PredictionModule:
         for i, (text, matched_routes) in  enumerate(zip(texts_to_handle,texts_routes_matches)):
             if matched_routes:
                 for route in matched_routes:
-                    if route.prediction_score_range:
-                        if route.predicted_labels:
+                    if route.prediction_score_range :
+                        if route.predicted_labels and text in predictions:
                             if closest:
-                                predictions_to_test= [prediction for prediction in predictions[text] if prediction["label"] in route.predicted_labels ]
+                                predictions_to_test= [prediction for prediction in predictions[text] if  prediction["label"] in route.predicted_labels ]
                             else:
                                 predictions_to_test= [prediction for prediction in predictions[text] if prediction["label"] in route.predicted_labels]
                         else:
