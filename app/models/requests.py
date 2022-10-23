@@ -1,6 +1,8 @@
 from typing import Dict, List, Union, Optional
 from pydantic import BaseModel
 
+from app.models.configuration import ModelSettings
+
 class PredictionRequestRecord(BaseModel):
     key:str
     text:str
@@ -9,5 +11,6 @@ class PredictionRequestRecord(BaseModel):
 
 class PredictRequestBody(BaseModel):
     texts:List[Union[str,PredictionRequestRecord]]
+    settings:Union[Dict,ModelSettings,None]
 
 

@@ -18,7 +18,8 @@ from labelatorio.client import EndpointGroup
 import asyncio
 import gc
 from transformers.pipelines import Pipeline
-from app.models.configuration import RoutingSetting
+from app.core.models_cache import ModelsCache
+from app.models.configuration import ModelSettings, NodeSettings, RoutingSetting
 from ..models.requests import PredictionRequestRecord
 from ..models.responses import PredictedItem, Prediction, PredictionMatchExplanation, RouteExplanation, SimilarExample
 #from ..models.responses import Answer
@@ -26,119 +27,127 @@ from  .configuration import NodeConfigurationClient
 from  .contants import NodeStatusTypes, RouteRuleType, RouteHandlingTypes
 import persistqueue
 import logging
-class OptionTypes:
-    pipeline_task = "pipeline_task"
-    pipeline_kwargs =  "pipeline_kwargs"
-    is_multilabel="is_multilabel"
-    labels_preddefined="labels_preddefined"
-    labels_per_token="labels_per_token"
+from labelatorio import Client
+from ..config import  LABELATORIO_API_TOKEN, LABELATORIO_URL
+# class OptionTypes:
+#     pipeline_task = "pipeline_task"
+#     pipeline_kwargs =  "pipeline_kwargs"
+#     is_multilabel="is_multilabel"
+#     labels_preddefined="labels_preddefined"
+#     labels_per_token="labels_per_token"
 
-class PipelineTasks:
-    audio_classification = "audio-classification"
-    automatic_speech_recognition = "automatic-speech-recognition"
-    conversational = "conversational"
-    feature_extraction = "feature-extraction"
-    fill_mask = "fill-mask"
-    image_classification = "image-classification"
-    question_answering = "question-answering"
-    table_question_answering = "table-question-answering"
-    text2text_generation = "text2text-generation"
-    text_classification = "text-classification" 
-    text_generation = "text-generation"
-    token_classification = "token-classification"
-    ner  = "ner" # this alias to token-classification
-    translation = "translation"
-    translation_xx_to_yy = "translation_xx_to_yy"
-    summarization = "summarization"
-    zero_shot_classification = "zero-shot-classification"
+# class PipelineTasks:
+#     audio_classification = "audio-classification"
+#     automatic_speech_recognition = "automatic-speech-recognition"
+#     conversational = "conversational"
+#     feature_extraction = "feature-extraction"
+#     fill_mask = "fill-mask"
+#     image_classification = "image-classification"
+#     question_answering = "question-answering"
+#     table_question_answering = "table-question-answering"
+#     text2text_generation = "text2text-generation"
+#     text_classification = "text-classification" 
+#     text_generation = "text-generation"
+#     token_classification = "token-classification"
+#     ner  = "ner" # this alias to token-classification
+#     translation = "translation"
+#     translation_xx_to_yy = "translation_xx_to_yy"
+#     summarization = "summarization"
+#     zero_shot_classification = "zero-shot-classification"
 
-def get_model_path(model_name_or_id:str):
-        return os.path.join(MODELS_CACHE_PATH, model_name_or_id.replace("/","_"))
+# def get_model_path(model_name_or_id:str):
+#         return os.path.join(MODELS_CACHE_PATH, model_name_or_id.replace("/","_"))
 
-class TASK_TYPES:
-    NER="NER"
-    MULTILABEL_TEXT_CLASSIFICATION="MultiLabelTextClassification"
-    TEXT_CLASSIFICATION="TextClassification"
-    TEXT_SIMILARITY="TextSimilarity"
-    QUESTION_ANWERING="QuestionAnswering"
-    TEXT_SCORING="TextScoring"
+# class TASK_TYPES:
+#     NER="NER"
+#     MULTILABEL_TEXT_CLASSIFICATION="MultiLabelTextClassification"
+#     TEXT_CLASSIFICATION="TextClassification"
+#     TEXT_SIMILARITY="TextSimilarity"
+#     QUESTION_ANWERING="QuestionAnswering"
+#     TEXT_SCORING="TextScoring"
 
-    def get_options(task_type:str, option_type:str=None):
-        if task_type==TASK_TYPES.MULTILABEL_TEXT_CLASSIFICATION:
-            options={
-                OptionTypes.pipeline_task:PipelineTasks.text_classification,
-                OptionTypes.pipeline_kwargs:{"return_all_scores":True},
-                OptionTypes.is_multilabel:True,
-                OptionTypes.labels_preddefined:True,
-                OptionTypes.labels_per_token:False
-            }
-        elif task_type==TASK_TYPES.TEXT_CLASSIFICATION:
-            options={
-                OptionTypes.pipeline_task:PipelineTasks.text_classification,
-                OptionTypes.pipeline_kwargs:{"return_all_scores":True},
-                OptionTypes.is_multilabel:False,
-                OptionTypes.labels_preddefined:True,
-                OptionTypes.labels_per_token:False
-            }
-        elif task_type==TASK_TYPES.TEXT_SIMILARITY:
-            options={
-                OptionTypes.pipeline_task:None,
-                OptionTypes.pipeline_kwargs:None,
-                OptionTypes.is_multilabel:False,
-                OptionTypes.labels_preddefined:False,
-                OptionTypes.labels_per_token:False
-            }
-        elif task_type==TASK_TYPES.QUESTION_ANWERING:
-            options={
-                OptionTypes.pipeline_task:PipelineTasks.question_answering,
-                OptionTypes.pipeline_kwargs:None,
-                OptionTypes.is_multilabel:False,
-                OptionTypes.labels_preddefined:False,
-                OptionTypes.labels_per_token:False
-            }
-        elif task_type==TASK_TYPES.NER:
-            options={
-                OptionTypes.pipeline_task:PipelineTasks.ner,
-                OptionTypes.pipeline_kwargs:None,
-                OptionTypes.is_multilabel:True,
-                OptionTypes.labels_preddefined:True,
-                OptionTypes.labels_per_token:True
-            }
-        #  elif task_type==TASK_TYPES.TEXT_SCORING:
-        #     options={
-        #         OptionTypes.pipeline_task:None,
-        #         OptionTypes.pipeline_kwargs:None,
-        #         OptionTypes.is_multilabel:True,
-        #         OptionTypes.labels_preddefined:True,
-        #         OptionTypes.labels_per_token:True
-        #     }
-        else:
-            raise Exception(f"Option {task_type} not supported")
+#     def get_options(task_type:str, option_type:str=None):
+#         if task_type==TASK_TYPES.MULTILABEL_TEXT_CLASSIFICATION:
+#             options={
+#                 OptionTypes.pipeline_task:PipelineTasks.text_classification,
+#                 OptionTypes.pipeline_kwargs:{"return_all_scores":True},
+#                 OptionTypes.is_multilabel:True,
+#                 OptionTypes.labels_preddefined:True,
+#                 OptionTypes.labels_per_token:False
+#             }
+#         elif task_type==TASK_TYPES.TEXT_CLASSIFICATION:
+#             options={
+#                 OptionTypes.pipeline_task:PipelineTasks.text_classification,
+#                 OptionTypes.pipeline_kwargs:{"return_all_scores":True},
+#                 OptionTypes.is_multilabel:False,
+#                 OptionTypes.labels_preddefined:True,
+#                 OptionTypes.labels_per_token:False
+#             }
+#         elif task_type==TASK_TYPES.TEXT_SIMILARITY:
+#             options={
+#                 OptionTypes.pipeline_task:None,
+#                 OptionTypes.pipeline_kwargs:None,
+#                 OptionTypes.is_multilabel:False,
+#                 OptionTypes.labels_preddefined:False,
+#                 OptionTypes.labels_per_token:False
+#             }
+#         elif task_type==TASK_TYPES.QUESTION_ANWERING:
+#             options={
+#                 OptionTypes.pipeline_task:PipelineTasks.question_answering,
+#                 OptionTypes.pipeline_kwargs:None,
+#                 OptionTypes.is_multilabel:False,
+#                 OptionTypes.labels_preddefined:False,
+#                 OptionTypes.labels_per_token:False
+#             }
+#         elif task_type==TASK_TYPES.NER:
+#             options={
+#                 OptionTypes.pipeline_task:PipelineTasks.ner,
+#                 OptionTypes.pipeline_kwargs:None,
+#                 OptionTypes.is_multilabel:True,
+#                 OptionTypes.labels_preddefined:True,
+#                 OptionTypes.labels_per_token:True
+#             }
+#         #  elif task_type==TASK_TYPES.TEXT_SCORING:
+#         #     options={
+#         #         OptionTypes.pipeline_task:None,
+#         #         OptionTypes.pipeline_kwargs:None,
+#         #         OptionTypes.is_multilabel:True,
+#         #         OptionTypes.labels_preddefined:True,
+#         #         OptionTypes.labels_per_token:True
+#         #     }
+#         else:
+#             raise Exception(f"Option {task_type} not supported")
         
-        if option_type:
-            return options[option_type]
-        else:
-            return options
+#         if option_type:
+#             return options[option_type]
+#         else:
+#             return options
 
 
 
-MODEL_CACHE_SIZE=1
+# MODEL_CACHE_SIZE=1
 
-MODELS_CACHE_PATH = "models_cache"
-
-
+# MODELS_CACHE_PATH = "models_cache"
+labelatorio_client =Client(LABELATORIO_API_TOKEN, url=LABELATORIO_URL)
+models_cache=ModelsCache(labelatorio_client )
 
 class PredictionModule:
     def __init__(self, configurationClient:NodeConfigurationClient ) -> None:
         if (torch.cuda.is_available()):
             print("CUDA availible... using GPU")
         
+        if not hasattr(self, "settings"): #used by subclasses
+            self.settings=None
         self.configurationClient=configurationClient
+        if self.configurationClient and self.configurationClient.labelatorio_client:
+            self.labelatorio_client = self.configurationClient.labelatorio_client
+        else:
+            self.labelatorio_client =labelatorio_client
+        self.models_cahce=models_cache
 
         self.backlog_queue= persistqueue.SQLiteQueue('queues/backlog_queue', auto_commit=True, multithreading=True)
         self.errors_queue= persistqueue.SQLiteQueue('queues/error_queue.db', auto_commit=True, multithreading=True)
-
-        self.labelatorio_client = self.configurationClient.labelatorio_client
+    
         self.model_anchor_vectors={}
         self.models_paths={}
         self.closest =  ClosestNeighbourEndpointGroup(self.labelatorio_client)
@@ -157,7 +166,12 @@ class PredictionModule:
     
 
     def reinitialize(self):
-        self.configurationClient.ping(status=NodeStatusTypes.UPDATING)
+        if self.configurationClient:
+            self.configurationClient.ping(status=NodeStatusTypes.UPDATING)
+            if not self.settings:
+                self.settings=self.configurationClient.settings
+             
+        settings=self.settings
         self.model_anchor_vectors={}
         old_paths = self.models_paths
         self.models_paths={}
@@ -166,15 +180,15 @@ class PredictionModule:
         gc.collect()
         self.memory_cache={}
         try:
-            if self.configurationClient.settings and self.configurationClient.settings.models:
-                self.default_model=self.configurationClient.settings.default_model or self.configurationClient.settings.models[0].model_name 
-                for modelConfig in self.configurationClient.settings.models:
+            if settings and settings.models:
+                self.default_model=settings.default_model or settings.models[0].model_name 
+                for modelConfig in settings.models:
                     
-                    self.predownload_model(modelConfig.project_id,modelConfig.model_name)
-                    
+                    self.models_cahce.predownload_model(modelConfig.project_id,modelConfig.model_name)
                     
                     if modelConfig.similarity_model:
-                        self.predownload_model(modelConfig.project_id,modelConfig.similarity_model)
+                        self.models_cahce.predownload_model(modelConfig.project_id,modelConfig.similarity_model)
+                        
                     elif (modelConfig.routing or modelConfig.default_handling!=RouteHandlingTypes.MODEL_AUTO) :
                         raise Exception(f"{modelConfig.model_name} :Invalid configuration. No similarity model defined. This is allow only for full auto mode without routing")
                     
@@ -182,17 +196,20 @@ class PredictionModule:
                     print("preparing anchors")
                     for route_id, route in enumerate(modelConfig.routing):
                         if route.rule_type==RouteRuleType.ANCHORS:
-                            similarity_model=self.get_similarity_model(modelConfig.similarity_model)
+                            similarity_model=self.models_cahce.get_similarity_model(modelConfig.project_id, modelConfig.similarity_model)
                             if self.model_anchor_vectors.get(modelConfig.model_name) is None:
                                 self.model_anchor_vectors[modelConfig.model_name]={}
                             self.model_anchor_vectors[modelConfig.model_name][route_id] =similarity_model.encode(route.anchors,  normalize_embeddings=True)
                 
                 if self.default_model: #preload default models into memory
-                    self.get_pipeline(self.default_model, self.configurationClient.settings.get_model(self.default_model).task_type)  #preload into memory
-                    default_similarity_model = next((model.similarity_model for model in self.configurationClient.settings.models if model.model_name==self.default_model),None)
-                    if default_similarity_model:
-                        self.get_similarity_model(default_similarity_model)
-            self.configurationClient.ping(status=NodeStatusTypes.READY)
+                    defatult_settings = settings.get_model_settings(self.default_model)
+                    self.models_cahce.get_pipeline(defatult_settings.project_id, self.default_model, defatult_settings.task_type)  #preload into memory
+                    default_similarity_model_settings = next((model for model in settings.models if model.model_name==self.default_model),None)
+                    if default_similarity_model_settings:
+                        self.models_cahce.get_similarity_model(default_similarity_model_settings.project_id, default_similarity_model_settings.similarity_model)
+
+            if self.configurationClient:
+                self.configurationClient.ping(status=NodeStatusTypes.READY)
             print("Reconfiguraiton ready")
             #TODO: Delete old paths to save disk space?>>  old_paths
         except Exception as ex:
@@ -201,34 +218,25 @@ class PredictionModule:
                         
 
 
-    def predownload_model(self, project_id, model_name):
-         if not os.path.exists(get_model_path(model_name)):
-            print(f"predownload_model {model_name}")
-            if self.labelatorio_client.models.get_info(model_name):
-                self.models_paths[model_name] = get_model_path(model_name)
-                self.labelatorio_client.models.download(project_id=project_id, model_name_or_id=model_name, target_path=get_model_path(model_name))
-            else:
-                
-                self.models_paths[model_name] = hf_download(repo_id=model_name, cache_dir=MODELS_CACHE_PATH)
-            print(f"download {model_name} finished")
+
 
 
     def predict_labels(self, background_tasks:BackgroundTasks, data_to_send:Union[List[str], List[PredictionRequestRecord]], model_name:Optional[str], explain:Optional[bool]=None, test:Optional[bool]=False)->PredictedItem:
 
         if self.configuration_error:
             raise HTTPException(520,{"error":f"Configuration error: {self.configuration_error}"})
-        if not self.configurationClient.settings.models:
+        if not self.settings.models:
             raise HTTPException(520,{"error":"No models are defined for this node"})
         if not model_name:
-            model_name = self.configurationClient.settings.default_model or self.configurationClient.settings.models[0].model_name
+            model_name = self.default_model
         
         pipe=None
-        settings =  self.configurationClient.settings.get_model(model_name)
+        settings =  self.settings.get_model_settings(model_name)
         if not settings:
             raise HTTPException(520,{"error":f"Model {model_name} is not deployed on this node"})
 
         if not data_to_send:
-            return None
+            return []
 
         uniqueTexts =  {text for text in data_to_send} if isinstance(data_to_send[0],str) else {rec.text for rec in data_to_send}
         
@@ -249,7 +257,7 @@ class PredictionModule:
         if settings.routing:
             correctly_predicted_min_range = min((route.similarity_range.min for route in settings.routing if route.rule_type==RouteRuleType.TRUE_POSITIVES), default=None)
             
-            query_vectors = self.get_similarity_model(settings.similarity_model).encode(texts_to_handle, normalize_embeddings=True)
+            query_vectors = self.models_cahce.get_similarity_model(settings.project_id, settings.similarity_model).encode(texts_to_handle, normalize_embeddings=True)
             
             closest=None
             if correctly_predicted_min_range:
@@ -278,12 +286,12 @@ class PredictionModule:
                         
                         if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] is None:
                             # if no prediction was made yet we need to run it our self
-                            pipe = self.get_pipeline(model_name, settings.task_type) 
+                            pipe = self.models_cahce.get_pipeline(settings.project_id, model_name, settings.task_type) 
                             predictions= set(p["label"] for p in pipe(closest_correctly_predicted["text"], padding=True, truncation=True)[0] if p["score"]>0.5)
                             if set(closest_correctly_predicted["labels"])==predictions:
                                 closest_correctly_predicted["correctly_predicted"]=True
 
-                        if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] and closest_correctly_predicted["score"]*100>=route.similarity_range.min and closest_correctly_predicted["score"]*100<=route.similarity_range.max:
+                        if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] and  round(closest_correctly_predicted["score"]*100,3)>=route.similarity_range.min and round(closest_correctly_predicted["score"]*100,3)<=route.similarity_range.max:
                             matched_routes.append( route)
 
                         if explain:
@@ -343,7 +351,7 @@ class PredictionModule:
             texts_to_predict = [text for  text, matched_routes in zip(texts_to_handle,texts_routes_matches) if  any(1 for route in matched_routes if RouteHandlingTypes.should_predict(route.handling) ) ]
         if texts_to_predict:
             if pipe is None:
-                pipe = self.get_pipeline(model_name, settings.task_type) 
+                pipe = self.models_cahce.get_pipeline(settings.project_id, model_name, settings.task_type) 
             predictions= {text:doc_predictions  for text, doc_predictions in zip(texts_to_predict,pipe(texts_to_predict, padding=True, truncation=True))}
         else:
             predictions={}
@@ -362,7 +370,7 @@ class PredictionModule:
                         else:
                             predictions_to_test=predictions.get(text) or []
 
-                        if any(1 for prediction in predictions_to_test if prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  and  ((closest and prediction["label"] in closest[i]["labels"]) or not closest) ):
+                        if any(1 for prediction in predictions_to_test if prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  and  ((closest and closest[i] and prediction["label"] in closest[i]["labels"]) or not closest) ):
                             text_handled_routes[text] = route
                             break
                     else:
@@ -379,9 +387,9 @@ class PredictionModule:
                         matched_prediction_score=False
                         prediciton_matches=[]
                         for prediction in predictions[text]:
-                            matched=(  (prediction["label"] in route.predicted_labels or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  ) if route.predicted_labels else False
-                            if matched and closest:
-                                #if matched and closses to correctly predicted is also part of the matchin, we test also if label is the same as the clossest doc
+                            matched=(  ((route.predicted_labels and prediction["label"] in route.predicted_labels ) or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  ) 
+                            if matched and closest and closest[i]:
+                                #if matched and closest to correctly predicted is also part of the matchin, we test also if label is the same as the clossest doc
                                 matched= prediction["label"] in closest[i]["labels"]
                             prediciton_matches.append(PredictionMatchExplanation(
                                 prediction=prediction,
@@ -472,7 +480,7 @@ class PredictionModule:
         # if not model_name:
         #     model_name = self.configurationClient.settings.default_model or self.configurationClient.settings.models[0].model_name
         
-        settings =  self.configurationClient.settings.get_model(model_name or "") 
+        settings =  self.configurationClient.settings.get_model_settings(model_name or "") 
         
         uniqueTexts =  {text for text in questions} if isinstance(questions[0],str) else {rec.text for rec in questions}
         
@@ -481,7 +489,7 @@ class PredictionModule:
 
         correctly_predicted_min_range = min((route.similarity_range.min for route in settings.routing if route.rule_type==RouteRuleType.TRUE_POSITIVES), default=None)
 
-        query_vectors = self.get_similarity_model(settings.similarity_model).encode(texts_to_handle, normalize_embeddings=True)
+        query_vectors = self.models_cahce.get_similarity_model(settings.project_id, settings.similarity_model).encode(texts_to_handle, normalize_embeddings=True)
         
         closest = self.closest.get_closest(
                     settings.project_id, 
@@ -559,35 +567,35 @@ class PredictionModule:
         return  predictions
 
 
-    def get_pipeline(self,  model_name_or_id:str, task_type:str )->Pipeline:
-        cache_key=f"get_pipeline.{model_name_or_id}"
-        if cache_key in self.memory_cache:
-            return self.memory_cache[cache_key]
+    # def get_pipeline(self,  model_name_or_id:str, task_type:str )->Pipeline:
+    #     cache_key=f"get_pipeline.{model_name_or_id}"
+    #     if cache_key in self.memory_cache:
+    #         return self.memory_cache[cache_key]
 
-        print(f"get_pipeline: {model_name_or_id}")
-        huggingface_pipeline_task= TASK_TYPES.get_options(task_type,OptionTypes.pipeline_task )
-        pipeline_kwrgars= TASK_TYPES.get_options(task_type,OptionTypes.pipeline_kwargs )
+    #     print(f"get_pipeline: {model_name_or_id}")
+    #     huggingface_pipeline_task= TASK_TYPES.get_options(task_type,OptionTypes.pipeline_task )
+    #     pipeline_kwrgars= TASK_TYPES.get_options(task_type,OptionTypes.pipeline_kwargs )
 
-        result_model_path= get_model_path(model_name_or_id)
-        if pipeline_kwrgars is None:
-            pipeline_kwrgars={}
-            self.memory_cache[cache_key]= pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
+    #     result_model_path= get_model_path(model_name_or_id)
+    #     if pipeline_kwrgars is None:
+    #         pipeline_kwrgars={}
+    #         self.memory_cache[cache_key]= pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
             
-        else:
-            self.memory_cache[cache_key]= pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
+    #     else:
+    #         self.memory_cache[cache_key]= pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
         
-        return self.memory_cache[cache_key]
+    #     return self.memory_cache[cache_key]
 
     
     
-    def get_similarity_model(self,  model_name_or_id:str ):
-        cache_key=f"get_similarity_model.{model_name_or_id}"
-        if cache_key in self.memory_cache:
-            return self.memory_cache[cache_key] 
-        print(f"get_similarity_model: {model_name_or_id}")
-        result_model_path= self.models_paths[model_name_or_id]        
-        self.memory_cache[cache_key] =  SentenceTransformer(result_model_path)
-        return self.memory_cache[cache_key]
+    # def get_similarity_model(self,  model_name_or_id:str ):
+    #     cache_key=f"get_similarity_model.{model_name_or_id}"
+    #     if cache_key in self.memory_cache:
+    #         return self.memory_cache[cache_key] 
+    #     print(f"get_similarity_model: {model_name_or_id}")
+    #     result_model_path= self.models_paths[model_name_or_id]        
+    #     self.memory_cache[cache_key] =  SentenceTransformer(result_model_path)
+    #     return self.memory_cache[cache_key]
 
     async def flush_send_to_backlog(self):
         
@@ -609,6 +617,13 @@ class PredictionModule:
         
         
 
+class TemporaryPredictionModule(PredictionModule):
+
+    def __init__(self, model_setttings:ModelSettings) -> None:
+        self.settings=NodeSettings(default_model=model_setttings.model_name, models=[model_setttings], authorization=None)
+        super().__init__(None)
+
+    
 
 
 

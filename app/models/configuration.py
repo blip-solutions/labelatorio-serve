@@ -47,7 +47,7 @@ class NodeSettings(BaseModel):
     models:List[ModelSettings]
     authorization:Optional[NodeAuthorization]
 
-    def get_model(self, model_name) -> ModelSettings:
+    def get_model_settings(self, model_name) -> ModelSettings:
         return next((model for model in self.models if model.model_name==model_name), None)
 
 

@@ -44,3 +44,5 @@ SERVICE_ACCESS_TOKEN =  try_get_config("SERVICE_ACCESS_TOKEN",required=False)  #
 
 
 DISABLED_AUTH = try_get_config("DISABLED_AUTH",default=False)
+
+MAX_MODELS_IN_CACHE = try_get_config("MAX_MODELS_IN_CACHE",default=False)
