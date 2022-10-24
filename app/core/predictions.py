@@ -17,6 +17,7 @@ from fastapi import HTTPException, BackgroundTasks
 from labelatorio.client import EndpointGroup
 import asyncio
 import gc
+import re
 from transformers.pipelines import Pipeline
 from app.core.models_cache import ModelsCache
 from app.models.configuration import ModelSettings, NodeSettings, RoutingSetting
@@ -168,17 +169,18 @@ class PredictionModule:
     def reinitialize(self):
         if self.configurationClient:
             self.configurationClient.ping(status=NodeStatusTypes.UPDATING)
-            if not self.settings:
-                self.settings=self.configurationClient.settings
+            self.settings=self.configurationClient.settings
              
         settings=self.settings
         self.model_anchor_vectors={}
+        self.regexes={}
         old_paths = self.models_paths
         self.models_paths={}
 
         del self.memory_cache
         gc.collect()
         self.memory_cache={}
+        
         try:
             if settings and settings.models:
                 self.default_model=settings.default_model or settings.models[0].model_name 
@@ -200,6 +202,10 @@ class PredictionModule:
                             if self.model_anchor_vectors.get(modelConfig.model_name) is None:
                                 self.model_anchor_vectors[modelConfig.model_name]={}
                             self.model_anchor_vectors[modelConfig.model_name][route_id] =similarity_model.encode(route.anchors,  normalize_embeddings=True)
+                        if route.regex:
+                            if modelConfig.model_name not in self.regexes:
+                                self.regexes[modelConfig.model_name]={}
+                            self.regexes[modelConfig.model_name][route_id] = re.compile(route.regex)
                 
                 if self.default_model: #preload default models into memory
                     defatult_settings = settings.get_model_settings(self.default_model)
@@ -282,6 +288,28 @@ class PredictionModule:
                 
                 for route_id, route in enumerate(settings.routing) :
 
+                    # start with regex, since that is the cheapest test
+                    if route.regex:
+                        if not self.regexes[model_name][route_id].search(text2handle):
+                            matched_regex=False
+                            if explain:
+                                explanations[text2handle][route_id]=RouteExplanation(
+                                        route_id=route_id, 
+                                        route_type=route.rule_type, 
+                                        route_handling=route.handling,
+                                        matched=False,
+                                        used=False,
+                                        matched_prediction=None,
+                                        matched_regex=False,
+                                        matched_similar=None,
+                                        matched_similar_example=None
+                                    )
+                            continue
+                        else:
+                            matched_regex=True
+                    else:
+                        matched_regex=None
+
                     if route.rule_type==RouteRuleType.TRUE_POSITIVES:
                         
                         if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] is None:
@@ -301,6 +329,7 @@ class PredictionModule:
                                     route_handling=route.handling,
                                     matched=False,
                                     used=False,
+                                    matched_regex=matched_regex,
                                     matched_prediction=None,
                                     matched_similar=True if route in matched_routes else False, 
                                     matched_similar_example=SimilarExample(
@@ -334,6 +363,7 @@ class PredictionModule:
                                     route_handling=route.handling,
                                     matched=False,
                                     used=False,
+                                    matched_regex=matched_regex,
                                     matched_prediction=None,
                                     matched_similar=True if route in matched_routes else False, 
                                     matched_similar_example=SimilarExample(text=route.anchors[max_sim_anchor_index], score=max_similarity) if max_sim_anchor_index is not None else None
@@ -399,7 +429,8 @@ class PredictionModule:
                             matched_prediction_score=matched_prediction_score or matched
                         
                         explanation.matched_prediction=prediciton_matches
-                        explanation.matched = matched_prediction_score and explanation.matched_similar
+                        
+                        explanation.matched = True if matched_prediction_score and explanation.matched_similar else False
                     else:
                         explanation.matched=True
                     

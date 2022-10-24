@@ -49,6 +49,7 @@ class RouteExplanation(BaseModel):
     matched_prediction:Optional[List[PredictionMatchExplanation]]
     matched_similar:Optional[bool]
     matched_similar_example:Optional[SimilarExample]
+    matched_regex:Optional[bool]=None
     #matched_correct_prediction:Optional[bool]
     
 

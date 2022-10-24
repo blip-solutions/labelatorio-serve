@@ -14,6 +14,8 @@ class RoutingSetting(BaseModel):
     similarity_range:Optional[FloatRange] = None
     predicted_labels:Optional[List[str]] = None
     prediction_score_range:Optional[FloatRange] = None
+    name:Optional[str]=None
+    regex:Optional[str]=None
 
 
 
