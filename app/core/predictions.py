@@ -4,7 +4,7 @@ import functools
 import os
 from pickle import FALSE
 from datetime import timezone
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import snapshot_download as hf_download
@@ -29,7 +29,7 @@ from  .contants import NodeStatusTypes, RouteRuleType, RouteHandlingTypes
 import persistqueue
 import logging
 from labelatorio import Client
-from ..config import  LABELATORIO_API_TOKEN, LABELATORIO_URL
+from ..config import  LABELATORIO_API_TOKEN, LABELATORIO_URL, TEST_MODE
 # class OptionTypes:
 #     pipeline_task = "pipeline_task"
 #     pipeline_kwargs =  "pipeline_kwargs"
@@ -266,6 +266,7 @@ class PredictionModule:
             query_vectors = self.models_cahce.get_similarity_model(settings.project_id, settings.similarity_model).encode(texts_to_handle, normalize_embeddings=True)
             
             closest=None
+            matched_closest={}
             if correctly_predicted_min_range:
                 closest = self.closest.get_closest(
                     settings.project_id, 
@@ -284,10 +285,11 @@ class PredictionModule:
                 if correctly_predicted_min_range and closest:
                     closest_correctly_predicted =closest[i]
 
-                matched_routes:List[RoutingSetting]=[]
+                matched_routes:Dict[int,RoutingSetting]={}
+                
                 
                 for route_id, route in enumerate(settings.routing) :
-
+                    
                     # start with regex, since that is the cheapest test
                     if route.regex:
                         if not self.regexes[model_name][route_id].search(text2handle):
@@ -302,7 +304,7 @@ class PredictionModule:
                                         matched_prediction=None,
                                         matched_regex=False,
                                         matched_similar=None,
-                                        matched_similar_example=None
+                                        matched_similar_examples=None
                                     )
                             continue
                         else:
@@ -312,15 +314,24 @@ class PredictionModule:
 
                     if route.rule_type==RouteRuleType.TRUE_POSITIVES:
                         
-                        if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] is None:
-                            # if no prediction was made yet we need to run it our self
-                            pipe = self.models_cahce.get_pipeline(settings.project_id, model_name, settings.task_type) 
-                            predictions= set(p["label"] for p in pipe(closest_correctly_predicted["text"], padding=True, truncation=True)[0] if p["score"]>0.5)
-                            if set(closest_correctly_predicted["labels"])==predictions:
-                                closest_correctly_predicted["correctly_predicted"]=True
+                        if closest_correctly_predicted:
+                            for item in closest_correctly_predicted:
+                                if item["correctly_predicted"] is None:
+                                    # if no prediction was made yet we need to run it our self
+                                    pipe = self.models_cahce.get_pipeline(settings.project_id, model_name, settings.task_type) 
+                                    predictions= set(p["label"] for p in pipe(item["text"], padding=True, truncation=True)[0] if p["score"]>0.5)
+                                    if set(item["labels"])==predictions:
+                                        item["correctly_predicted"]=True
 
-                        if closest_correctly_predicted and closest_correctly_predicted["correctly_predicted"] and  round(closest_correctly_predicted["score"]*100,3)>=route.similarity_range.min and round(closest_correctly_predicted["score"]*100,3)<=route.similarity_range.max:
-                            matched_routes.append( route)
+                            matched_sim_range_items = [item for item in closest_correctly_predicted if item["correctly_predicted"] and  round(item["score"]*100,3)>=route.similarity_range.min and round(item["score"]*100,3)<=route.similarity_range.max]
+                            if i not in matched_closest:
+                                matched_closest[i]={route_id:matched_sim_range_items}
+                            else:
+                                matched_closest[i][route_id] = matched_sim_range_items
+                            if matched_sim_range_items:
+                                correctly_predicted_ratio = sum(1 for item in matched_sim_range_items if item["correctly_predicted"])+1 / len(matched_sim_range_items)
+                                if correctly_predicted_ratio*100>route.similarity_range.min:
+                                    matched_routes[route_id]= route
 
                         if explain:
                             explanations[text2handle][route_id]=RouteExplanation(
@@ -331,13 +342,8 @@ class PredictionModule:
                                     used=False,
                                     matched_regex=matched_regex,
                                     matched_prediction=None,
-                                    matched_similar=True if route in matched_routes else False, 
-                                    matched_similar_example=SimilarExample(
-                                        text=closest_correctly_predicted["text"] , 
-                                        score=closest_correctly_predicted["score"],
-                                        labels=closest_correctly_predicted["labels"], 
-                                        correctly_predicted=closest_correctly_predicted["correctly_predicted"]  
-                                     ) if closest_correctly_predicted else None
+                                    matched_similar=True if route_id in matched_routes else False, 
+                                    matched_similar_examples= None
                                  )
                                 
                             
@@ -353,7 +359,7 @@ class PredictionModule:
                                 max_sim_anchor_index= anchor_index
 
                             if similarity>=route.similarity_range.min/100 and similarity<=route.similarity_range.max/100:
-                                matched_routes.append(route)
+                                matched_routes[route_id]= route
                                 break
 
                         if explain:
@@ -365,8 +371,8 @@ class PredictionModule:
                                     used=False,
                                     matched_regex=matched_regex,
                                     matched_prediction=None,
-                                    matched_similar=True if route in matched_routes else False, 
-                                    matched_similar_example=SimilarExample(text=route.anchors[max_sim_anchor_index], score=max_similarity) if max_sim_anchor_index is not None else None
+                                    matched_similar=True if route_id in matched_routes else False, 
+                                    matched_similar_examples=[SimilarExample(text=route.anchors[max_sim_anchor_index], score=max_similarity)] if max_sim_anchor_index is not None else None
                                  )
                                 
                             
@@ -378,7 +384,7 @@ class PredictionModule:
         if RouteHandlingTypes.should_predict(settings.default_handling) or explain:
             texts_to_predict= texts_to_handle
         else:
-            texts_to_predict = [text for  text, matched_routes in zip(texts_to_handle,texts_routes_matches) if  any(1 for route in matched_routes if RouteHandlingTypes.should_predict(route.handling) ) ]
+            texts_to_predict = [text for  text, matched_routes in zip(texts_to_handle,texts_routes_matches) if  any(1 for route in matched_routes.values() if RouteHandlingTypes.should_predict(route.handling) ) ]
         if texts_to_predict:
             if pipe is None:
                 pipe = self.models_cahce.get_pipeline(settings.project_id, model_name, settings.task_type) 
@@ -390,24 +396,26 @@ class PredictionModule:
         
         for i, (text, matched_routes) in  enumerate(zip(texts_to_handle,texts_routes_matches)):
             if matched_routes:
-                for route in matched_routes:
+                for route_id,route in matched_routes.items():
                     if route.prediction_score_range :
                         if route.predicted_labels and text in predictions:
-                            if closest:
-                                predictions_to_test= [prediction for prediction in predictions[text] if  prediction["label"] in route.predicted_labels ]
-                            else:
-                                predictions_to_test= [prediction for prediction in predictions[text] if prediction["label"] in route.predicted_labels]
+                            predictions_to_test= [prediction for prediction in predictions[text] if prediction["label"] in route.predicted_labels]
+                            
                         else:
                             predictions_to_test=predictions.get(text) or []
 
-                        if any(1 for prediction in predictions_to_test if prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  and  ((closest and closest[i] and prediction["label"] in closest[i]["labels"]) or not closest) ):
+                        if any(1 for prediction in predictions_to_test if
+                                             prediction["score"]>=(route.prediction_score_range.min or -1000) 
+                                        and  prediction["score"]<=(route.prediction_score_range.max or 1000)  
+                                        and  ((route_id in matched_closest[i] and  ((i in matched_closest and any( 1 for item in matched_closest[i][route_id] if prediction["label"] in item["labels"] )) ) or not route_id in matched_closest[i] ) if i in matched_closest else True)
+                                ):
                             text_handled_routes[text] = route
                             break
                     else:
                         text_handled_routes[text] = route
                         break
 
-            if explain:
+            if explain and explanations:
                 for route_id,explanation in explanations[text].items():
                 
                     route = settings.routing[route_id]
@@ -418,16 +426,25 @@ class PredictionModule:
                         prediciton_matches=[]
                         for prediction in predictions[text]:
                             matched=(  ((route.predicted_labels and prediction["label"] in route.predicted_labels ) or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  ) 
-                            if matched and closest and closest[i]:
+                            if matched and route_id in matched_closest[i] :
                                 #if matched and closest to correctly predicted is also part of the matchin, we test also if label is the same as the clossest doc
-                                matched= prediction["label"] in closest[i]["labels"]
+                                matched_closest_items= [item for item in matched_closest[i][route_id] if prediction["label"] in item["labels"] ] 
+                            else:
+                                matched_closest_items = []
                             prediciton_matches.append(PredictionMatchExplanation(
                                 prediction=prediction,
-                                matched= matched
+                                matched= matched and len(matched_closest_items)>0
                             ))
                             
                             matched_prediction_score=matched_prediction_score or matched
                         
+                        if matched_closest_items:
+                            explanation.matched_similar_examples=  [SimilarExample(
+                                        text=item["text"] , 
+                                        score=item["score"],
+                                        labels=item["labels"], 
+                                        correctly_predicted=item["correctly_predicted"])   for item in matched_closest_items]
+                                     
                         explanation.matched_prediction=prediciton_matches
                         
                         explanation.matched = True if matched_prediction_score and explanation.matched_similar else False
@@ -489,7 +506,7 @@ class PredictionModule:
 
             result.append(predictionItem)
 
-        if not test and add_to_backlog:
+        if not (test or TEST_MODE) and add_to_backlog:
             has_backlog_items=False
             for project_id, backlog_items in to_backlog.items():
                 if data_to_send:
@@ -699,7 +716,7 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
             "query_vectors":[list( float(s) for s in vec) for vec in query_vectors],
             "select_fields":select_fields,
             "filter":filter,
-            "take":1
+            "take":5
         }
         # if correctly_predicted:
         #     payload["filter"]={
@@ -714,7 +731,7 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
                     for rec in subresult: 
                         #todo - handle cases when predictions wasnt apllied yet
                         rec["correctly_predicted"] = set(rec["labels"])==set(rec["predicted_labels"]) if "predicted_labels" in rec and rec["predicted_labels" ] else None
-                        final_result.append(rec)
+                    final_result.append(subresult)
                 else:
                     final_result.append(None)
                 # correct_res = [rec for rec in subresult if rec["labels"]==rec["predicted_labels"]]
@@ -723,6 +740,6 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
                 # else:
                 #     final_result.append(None)
             else:
-                final_result.append(next(iter(subresult), None))
+                final_result.append(subresult)
         return final_result
         

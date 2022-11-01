@@ -4,3 +4,4 @@ models_cache
 __pycache__/
 app/cofig/
 .vscode
+queues

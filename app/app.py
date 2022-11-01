@@ -146,8 +146,9 @@ async def root(request:Request):
         )
     
 
-
+#app.add_exception_handler(, http_error_handler)
 app.add_exception_handler(HTTPException, http_error_handler)
+
 app.add_exception_handler(
     HTTP_422_UNPROCESSABLE_ENTITY, http_422_error_handler)
 

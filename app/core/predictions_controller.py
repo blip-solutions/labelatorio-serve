@@ -1,6 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Security, BackgroundTasks
-
+from pydantic.error_wrappers import ValidationError
 from app.models.configuration import ModelSettings
 from .configuration import configuration_client
 from .contants import RouteHandlingTypes
@@ -27,8 +27,10 @@ router = APIRouter()
 def predict(background_tasks: BackgroundTasks,request: Request, body:PredictRequestBody, model_name:Optional[str]=None , explain:Optional[bool]=False,  test:Optional[bool]=False)->Info:
     print(body)
     if body.settings is not None:
-        
-        prediction_module = TemporaryPredictionModule(ModelSettings(**body.settings))
+        try:
+            prediction_module = TemporaryPredictionModule(ModelSettings(**body.settings))
+        except ValidationError as ex:
+            raise HTTPException(422, detail=str(ex))
     else:
         prediction_module =  request.app.state.prediction_module
 
