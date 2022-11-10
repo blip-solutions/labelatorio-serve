@@ -15,7 +15,8 @@ MODEL_CACHE_SIZE=1
 MODELS_CACHE_PATH = "models_cache"
 
 def get_model_path(model_name_or_id:str):
-        return os.path.join(MODELS_CACHE_PATH, "models--" + model_name_or_id.replace("/","--"))
+    return os.path.join(MODELS_CACHE_PATH, "".join(x if x.isalnum() else "_" for x in model_name_or_id))
+        
 
 WAIT_HANDLE={}
 temp_mem_chache={} #this is just to fool lru_cache
