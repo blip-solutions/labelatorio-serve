@@ -244,7 +244,7 @@ class PredictionModule:
         if not data_to_send:
             return []
 
-        uniqueTexts =  {text for text in data_to_send} if isinstance(data_to_send[0],str) else {rec.text for rec in data_to_send}
+        uniqueTexts = { rec if  isinstance(rec,str) else rec.text  for rec in data_to_send}
         
 
 
