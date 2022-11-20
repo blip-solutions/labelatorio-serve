@@ -456,9 +456,9 @@ class PredictionModule:
 
 
         
-
         to_backlog={}
         result:List[PredictedItem] = []
+        
         for rec in data_to_send:
             if isinstance(rec,str):
                 text = rec
@@ -474,7 +474,7 @@ class PredictionModule:
             predictionItem = PredictedItem( predicted=prediction_objects, handling=handling)
 
             add_to_backlog=False
-            if not test and handling==RouteHandlingTypes.MANUAL or handling==RouteHandlingTypes.MODEL_REVIEW:
+            if  handling==RouteHandlingTypes.MANUAL or handling==RouteHandlingTypes.MODEL_REVIEW:
                 add_to_backlog=True
 
             reviewProjectId=settings.project_id
@@ -506,10 +506,12 @@ class PredictionModule:
 
             result.append(predictionItem)
 
-        if not (test or TEST_MODE) and add_to_backlog:
+        if not (test or TEST_MODE) and to_backlog:
             has_backlog_items=False
             for project_id, backlog_items in to_backlog.items():
-                if data_to_send:
+
+                if backlog_items:
+                    #print("to backlog: "+str([ item.get("key")  or f'text:{item.get("text")}'  for item in backlog_items]))
                     has_backlog_items=True
                     self.backlog_queue.put((project_id, backlog_items))
             if has_backlog_items:
@@ -655,6 +657,7 @@ class PredictionModule:
 
             try:
                 #print(f"{project_id}>> {docs}")
+                #print("from backlog: "+str([ item.get("key")  or f'text:{item.get("text")}'  for item in docs]))
                 res = self.labelatorio_client.documents.add_documents(project_id, docs, upsert=True)
                 #print(f"{project_id} << {res}")
 
