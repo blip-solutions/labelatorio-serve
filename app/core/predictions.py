@@ -23,7 +23,7 @@ from app.core.models_cache import ModelsCache
 from app.models.configuration import ModelSettings, NodeSettings, RoutingSetting
 from ..models.requests import PredictionRequestRecord
 from ..models.responses import PredictedItem, Prediction, PredictionMatchExplanation, RouteExplanation, SimilarExample
-#from ..models.responses import Answer
+from ..models.responses import Answer
 from  .configuration import NodeConfigurationClient 
 from  .contants import NodeStatusTypes, RouteRuleType, RouteHandlingTypes
 import persistqueue
@@ -278,6 +278,7 @@ class PredictionModule:
             for i, text2handle in enumerate(texts_to_handle):
                 if explain:
                     explanations[text2handle]={}
+            
 
                 closest_correctly_predicted=None
                 
@@ -426,7 +427,7 @@ class PredictionModule:
                         prediciton_matches=[]
                         for prediction in predictions[text]:
                             matched=(  ((route.predicted_labels and prediction["label"] in route.predicted_labels ) or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  ) 
-                            if matched and route_id in matched_closest[i] :
+                            if matched and  i in matched_closest and route_id in matched_closest[i] :
                                 #if matched and closest to correctly predicted is also part of the matchin, we test also if label is the same as the clossest doc
                                 matched_closest_items= [item for item in matched_closest[i][route_id] if prediction["label"] in item["labels"] ] 
                             else:
@@ -522,7 +523,7 @@ class PredictionModule:
         return result
                 
 
-    def get_answer(self, background_tasks:BackgroundTasks, questions:Union[List[str], List[PredictionRequestRecord]], model_name:Optional[str], explain:Optional[bool]=None, test:Optional[bool]=False):
+    def predict_answer(self, background_tasks:BackgroundTasks, questions:Union[List[str], List[PredictionRequestRecord]], top_k:int=1, model_name:Optional[str]=None, explain:Optional[bool]=None, test:Optional[bool]=False):
         if self.configuration_error:
             raise HTTPException(520,{"error":f"Configuration error: {self.configuration_error}"})
         # if not self.configurationClient.settings.models:
@@ -544,26 +545,44 @@ class PredictionModule:
         closest = self.closest.get_closest(
                     settings.project_id, 
                     query_vectors=query_vectors,
-                     min_score=correctly_predicted_min_range/100 if not explain else 0, 
+                     #ignore min score if default handling is not manual because othervise we dont get any answer
+                     min_score=correctly_predicted_min_range/100 if not explain and settings.default_handling== RouteHandlingTypes.MANUAL  else 0,  
                      select_fields=["id", "answer"] ,
+                     take=top_k,
                      answered=True )
         
         unique_results={}
-        for i, closest_correctly_predicted in enumerate(closest):
+        for i, closest_correctly_predicted_for_doc in enumerate(closest):
             handling=settings.default_handling
             answer=None
-            if closest_correctly_predicted and closest_correctly_predicted["answer"]:
-                answer=closest_correctly_predicted["answer"]
-                for route in settings.routing:
-                    if closest_correctly_predicted and closest_correctly_predicted["score"]*100>=route.similarity_range.min and closest_correctly_predicted["score"]*100<=route.similarity_range.max:
-                        handling=route.handling
-                        break
-            
-            
-            unique_results[texts_to_handle[i]]=(
-                    Answer(answer=answer, score=closest_correctly_predicted["score"] ) if answer and handling!=RouteHandlingTypes.MANUAL else None,
-                    handling if answer else RouteHandlingTypes.MANUAL 
-            )
+            for route in settings.routing:
+                matched_answer=[]
+                handling=route.handling
+                for closest_correctly_predicted in closest_correctly_predicted_for_doc:
+                    if closest_correctly_predicted and closest_correctly_predicted["answer"]:                
+                        if closest_correctly_predicted and closest_correctly_predicted["score"]*100>=route.similarity_range.min and closest_correctly_predicted["score"]*100<=route.similarity_range.max:
+                            answer = closest_correctly_predicted["answer"]
+                            matched_answer.append(Answer(answer=answer, score=closest_correctly_predicted["score"] )) 
+                
+                
+                if matched_answer:
+                    if handling!=RouteHandlingTypes.MANUAL :
+                        unique_results[texts_to_handle[i]]=(
+                            matched_answer,
+                            handling 
+                        )
+                    else:
+                        unique_results[texts_to_handle[i]]=(
+                            [],
+                            handling
+                        )
+                
+            if texts_to_handle[i] not in unique_results:
+                 unique_results[texts_to_handle[i]]=(
+                            [] if handling==RouteHandlingTypes.MANUAL else [Answer(answer=closest_correctly_predicted["answer"], score=closest_correctly_predicted["score"]) for closest_correctly_predicted in closest_correctly_predicted_for_doc],
+                            settings.default_handling
+                        )
+                
                 
         predictions=[] 
         to_backlog={}
@@ -574,9 +593,9 @@ class PredictionModule:
             else:
                 text = rec.text
             
-            (answer, handling) = unique_results[text]
+            (answers, handling) = unique_results[text]
 
-            predictionItem= PredictedItem(predicted=answer, handling=handling)
+            predictionItem= PredictedItem(predicted=answers, handling=handling)
             predictions.append(predictionItem)
               
 
@@ -606,7 +625,7 @@ class PredictionModule:
                 else:
                     to_backlog[reviewProjectId].append(backlog_payload)
 
-        if not test and add_to_backlog:
+        if not test and to_backlog:
             has_backlog_items=False
             for project_id, backlog_items in to_backlog.items():
                     has_backlog_items=True
@@ -690,7 +709,8 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
 
     def get_closest(self,project_id, query_vectors, select_fields:List, min_score, 
             correctly_predicted=None,
-            answered=None
+            answered=None,
+            take=5,
             ) -> List[dict]:
         """Get project by it's id
 
@@ -719,7 +739,7 @@ class ClosestNeighbourEndpointGroup(EndpointGroup[dict]):
             "query_vectors":[list( float(s) for s in vec) for vec in query_vectors],
             "select_fields":select_fields,
             "filter":filter,
-            "take":5
+            "take":take
         }
         # if correctly_predicted:
         #     payload["filter"]={

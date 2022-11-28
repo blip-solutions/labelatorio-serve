@@ -26,9 +26,9 @@ class Prediction(BaseModel):
     label:str
     score:float
 
-# class Answer(BaseModel):
-#     answer:str
-#     score:float
+class Answer(BaseModel):
+    answer:str
+    score:float
 
 class PredictionMatchExplanation(BaseModel):
     prediction:Prediction
@@ -55,14 +55,14 @@ class RouteExplanation(BaseModel):
 
 
 class PredictedItem(BaseModel):
-    #predicted:Union[List[Prediction],Answer, None]
-    predicted:Union[List[Prediction], None]
+    predicted:Union[List[Prediction],List[Answer], None]
+    #predicted:Union[List[Prediction], None]
     handling:str
     key:Optional[str]=None
     explanations:Optional[List[RouteExplanation]]=None
 
 
-class PredictctRespone(BaseModel):
+class PredictctResponse(BaseModel):
     predictions:List[PredictedItem]
 
 

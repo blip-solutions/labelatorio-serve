@@ -67,9 +67,9 @@ def predict(background_tasks: BackgroundTasks,request: Request, body:PredictRequ
 
         
 
-# @router.post("/get-answer", response_model=PredictctRespone, response_model_exclude_none=True)
-# @requires(['authenticated'])
-# async def get_answer(background_tasks: BackgroundTasks, request: Request,  body:PredictRequestBody, explain:Optional[bool]=False, test:Optional[bool]=False)->Info:
-#     print(body)
-#     result = request.app.state.prediction_module.get_answer(background_tasks,body.texts, model_name=None, explain=explain, test=test)
-#     return PredictctRespone(predictions=result)
+@router.post("/get-answer", response_model=PredictctResponse, response_model_exclude_none=True)
+@requires(['authenticated'])
+async def get_answer(background_tasks: BackgroundTasks, request: Request,  body:PredictRequestBody, top_k:int=1, explain:Optional[bool]=False, test:Optional[bool]=False)->Info:
+    prediction_module:PredictionModule = request.app.state.prediction_module
+    result =prediction_module.predict_answer(background_tasks,body.texts, model_name=None, top_k=top_k, explain=explain, test=test)
+    return PredictctResponse(predictions=result)
