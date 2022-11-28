@@ -43,7 +43,9 @@ app = FastAPI(
     root_path=ROOT_PATH,
     root_path_in_servers=False,
     title="Labelator.io Serving",
-    description="Model hosting for Labelator.io models",
+    description="""Hosting API for Labelator.io models
+    allows management via Labelator.io configuration
+    """,
     version=version
 )
 
@@ -134,7 +136,7 @@ app.add_middleware(AuthMiddleware, verify_header=verify_authorization_header)
 
 
 
-@app.get("/")
+@app.get("/", summary="Get node status",)
 async def root(request:Request):
     
     return Info(
@@ -158,7 +160,7 @@ app.include_router(errors_router)
 
 
 
-@app.post("/refresh")
+@app.post("/refresh", summary="Force node to refresh latest configuration from Labelator.io",)
 @requires(['control_access'])
 async def refresh(request:Request):
     print("Reqested refresh")

@@ -6,7 +6,7 @@ from .configuration import configuration_client
 from .contants import RouteHandlingTypes
 from .predictions import PredictionModule
 from ..models.requests import PredictRequestBody
-from ..models.responses import PredictctRespone
+from ..models.responses import PredictctResponse
 from starlette.authentication import requires
 from fastapi import Request
 import os
@@ -22,7 +22,7 @@ router = APIRouter()
 errors_queue= persistqueue.SQLiteQueue('queues/error_queue.db', auto_commit=True, multithreading=True)
 
 
-@router.get("/errors", response_model=List[dict])
+@router.get("/errors", response_model=List[dict], summary="Get list of records, that were not uploaded to Labelator.io successfuly ", tags=["errors"])
 @requires(['authenticated'])
 def get_errors(request:Request)->List[dict]:
    
@@ -31,7 +31,7 @@ def get_errors(request:Request)->List[dict]:
     return result
 
 
-@router.post("/errors/retry", response_model=dict)
+@router.post("/errors/retry", response_model=dict,  summary="Retry push documents to Labelator.io", tags=["errors"])
 @requires(['authenticated'])
 def retry_errors(request:Request)->dict:
     
@@ -59,7 +59,7 @@ def retry_errors(request:Request)->dict:
     return {"resolved":len(resolved)}
 
 
-@router.delete("/errors", response_model=dict)
+@router.delete("/errors", response_model=dict ,  summary="Clear errors without pushing to Labelator.io", tags=["errors"])
 @requires(['authenticated'])
 def retry_errors(request:Request)->dict:
     counter=0

@@ -6,14 +6,14 @@ from .configuration import configuration_client
 from .contants import RouteHandlingTypes
 from .predictions import PredictionModule, TemporaryPredictionModule
 from ..models.requests import PredictRequestBody
-from ..models.responses import PredictctRespone
+from ..models.responses import PredictctResponse
 from starlette.authentication import requires
 from fastapi import Request
 import os
 
 
 
-from ..models.responses import Info, PredictctRespone
+from ..models.responses import Info, PredictctResponse
 
 router = APIRouter()
 
@@ -22,7 +22,21 @@ router = APIRouter()
 
 
 
-@router.post("/predict", response_model=PredictctRespone, response_model_exclude_none=True)
+@router.post("/predict", response_model=PredictctResponse, response_model_exclude_none=True,
+    summary="Get predictions for request",
+    description="""
+    Allows query predictions for one or more texts
+
+    If final handling is manual or manual-review, data will be added to labelatorio project (unlest test mode is activated  ./predict?test=true)
+    For this it is recomended to list of string, but rather list of objects, cointaing key, text and optional contextData. This will allow additional data to be send to Labelator.io.
+
+    If explain mode activated ( ./predict?explain=true), response will contain explanations for all routing configuration for better understanding of the decision
+
+    Settings parameter is to enable query with custom settings for particular request. It is generaly not recomended to use this in production since it can rapidly decrease the performance. 
+    Especialy if new settings are pointing to model that has not been preloaded by defaul configuration
+
+    """
+)
 @requires(['authenticated'])
 def predict(background_tasks: BackgroundTasks,request: Request, body:PredictRequestBody, model_name:Optional[str]=None , explain:Optional[bool]=False,  test:Optional[bool]=False)->Info:
     print(body)
@@ -35,11 +49,11 @@ def predict(background_tasks: BackgroundTasks,request: Request, body:PredictRequ
         prediction_module =  request.app.state.prediction_module
 
     result = prediction_module.predict_labels(background_tasks, body.texts, model_name=model_name, explain=explain, test=test)
-    return PredictctRespone(predictions=result)
+    return PredictctResponse(predictions=result)
 
 
 
-# @router.post("/predict", response_model=PredictctRespone, response_model_exclude_none=True)
+# @router.post("/predict", response_model=PredictctResponse, response_model_exclude_none=True)
 # @requires(['authenticated'])
 # async def predict_default(background_tasks: BackgroundTasks, request: Request,  body:PredictRequestBody, explain:Optional[bool]=False, test:Optional[bool]=False)->Info:
 #     print(body)
@@ -49,7 +63,7 @@ def predict(background_tasks: BackgroundTasks,request: Request, body:PredictRequ
 #         prediction_module =  request.app.state.prediction_module
 #     result = prediction_module.predict_labels(background_tasks,body.texts, model_name=None, explain=explain, test=test)
 
-#     return PredictctRespone(predictions=result)
+#     return PredictctResponse(predictions=result)
 
         
 
