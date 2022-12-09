@@ -19,7 +19,7 @@ import asyncio
 import gc
 import re
 from transformers.pipelines import Pipeline
-from app.core.models_cache import ModelsCache
+from app.core.models_cache import ModelsCache, TASK_TYPES
 from app.models.configuration import ModelSettings, NodeSettings, RoutingSetting
 from ..models.requests import PredictionRequestRecord
 from ..models.responses import PredictedItem, Prediction, PredictionMatchExplanation, RouteExplanation, SimilarExample
@@ -388,7 +388,11 @@ class PredictionModule:
             texts_to_predict = [text for  text, matched_routes in zip(texts_to_handle,texts_routes_matches) if  any(1 for route in matched_routes.values() if RouteHandlingTypes.should_predict(route.handling) ) ]
         if texts_to_predict:
             if pipe is None:
+                if not model_name:
+                    raise HTTPException(400, "Model name is required" )
                 pipe = self.models_cahce.get_pipeline(settings.project_id, model_name, settings.task_type) 
+                if pipe is None:
+                    raise HTTPException(512, "Model name is required" )
             predictions= {text:doc_predictions  for text, doc_predictions in zip(texts_to_predict,pipe(texts_to_predict, padding=True, truncation=True))}
         else:
             predictions={}
@@ -404,6 +408,7 @@ class PredictionModule:
                             
                         else:
                             predictions_to_test=predictions.get(text) or []
+                            
 
                         if any(1 for prediction in predictions_to_test if
                                              prediction["score"]>=(route.prediction_score_range.min or -1000) 
@@ -470,7 +475,11 @@ class PredictionModule:
             if handling==RouteHandlingTypes.MANUAL:
                 prediction_objects=None
             else:
-                prediction_objects=[Prediction(label=item["label"],score=item["score"]) for item in predictions[text] if item["score"]> settings.min_prediction_score] if text in predictions   else None
+                if settings.task_type == TASK_TYPES.MULTILABEL_TEXT_CLASSIFICATION:
+                    prediction_objects=[Prediction(label=item["label"],score=item["score"]) for item in predictions[text] if item["score"]> settings.min_prediction_score] if text in predictions   else None
+                elif settings.task_type == TASK_TYPES.TEXT_CLASSIFICATION:
+                    top_prediction=max(predictions[text], key=lambda x: x["score"]) 
+                    prediction_objects = [Prediction(label=top_prediction["label"],score=top_prediction["score"])]
             
             predictionItem = PredictedItem( predicted=prediction_objects, handling=handling)
 
