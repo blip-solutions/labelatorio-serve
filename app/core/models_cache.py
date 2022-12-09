@@ -62,9 +62,9 @@ class ModelsCache():
         huggingface_pipeline_task= TASK_TYPES.get_options(task_type,OptionTypes.pipeline_task )
         pipeline_kwrgars= TASK_TYPES.get_options(task_type,OptionTypes.pipeline_kwargs )
 
-        result_model_path= get_model_path(model_name_or_id)
         
         self.predownload_model(project_id, model_name_or_id)
+        result_model_path= self.models_paths[model_name_or_id] 
 
         if pipeline_kwrgars is None:
             pipeline_kwrgars={}
@@ -98,22 +98,29 @@ class ModelsCache():
                 
                 print(f"download {model_name} finished")
         
+        config_path = os.path.join(model_path, "config.json")
+        if not os.path.exists(config_path):
+            for dirpath, dirnames, filenames in os.walk(model_path):
+                found = next((fn for fn in filenames if fn.endswith("config.json")),None)
+                if found:
+                    model_path=dirpath
+                    break
 
-        snapshot_path = os.path.join(model_path, "snapshots")
-        if os.path.exists(snapshot_path):
-            snapshosts= os.listdir(snapshot_path)
-            if snapshosts:
-                self.models_paths[model_name] =os.path.join( snapshot_path, snapshosts[0])
             else:
-                #backup plan...
-                print(f"no snapshot found... use HF native methogs")
-                from transformers import AutoConfig, AutoModel
-                model = AutoModel.from_pretrained(model_name,  cache_dir=MODELS_CACHE_PATH)
-                del model
-                gc.collect()
-                
-        else:
-            self.models_paths[model_name] =model_path
+                snapshot_path = os.path.join(model_path, "snapshots")
+                if os.path.exists(snapshot_path):
+                    snapshosts= os.listdir(snapshot_path)
+                    if snapshosts:
+                        model_path =os.path.join( snapshot_path, snapshosts[0])
+                    else:
+                        #backup plan...
+                        print(f"no snapshot found... use HF native methogs")
+                        from transformers import AutoConfig, AutoModel
+                        model = AutoModel.from_pretrained(model_name,  cache_dir=MODELS_CACHE_PATH)
+                        del model
+                        gc.collect()
+        
+        self.models_paths[model_name] =model_path
 
 
 
