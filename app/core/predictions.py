@@ -1,134 +1,32 @@
-from datetime import datetime
-from email.policy import default
-import functools
-import os
-from pickle import FALSE
-from datetime import timezone
-from typing import Dict, List, Optional, Union
-from transformers import pipeline
-from sentence_transformers import SentenceTransformer
-from huggingface_hub import snapshot_download as hf_download
-import torch
-import numpy as np
-from labelatorio import Client
-import shutil
-from functools import lru_cache
-from fastapi import HTTPException, BackgroundTasks
-from labelatorio.client import EndpointGroup
-import asyncio
 import gc
-import re
-from transformers.pipelines import Pipeline
-from app.core.models_cache import ModelsCache, TASK_TYPES
-from app.models.configuration import ModelSettings, NodeSettings, RoutingSetting
-from ..models.requests import PredictionRequestRecord
-from ..models.responses import PredictedItem, Prediction, PredictionMatchExplanation, RouteExplanation, SimilarExample
-from ..models.responses import Answer
-from  .configuration import NodeConfigurationClient 
-from  .contants import NodeStatusTypes, RouteRuleType, RouteHandlingTypes
-import persistqueue
 import logging
+import re
+from datetime import datetime, timezone
+from email.policy import default
+from functools import lru_cache
+from pickle import FALSE
+from typing import Dict, List, Optional, Union
+import numpy as np
+import persistqueue
+import torch
+from fastapi import BackgroundTasks, HTTPException
 from labelatorio import Client
-from ..config import  LABELATORIO_API_TOKEN, LABELATORIO_URL, TEST_MODE
-# class OptionTypes:
-#     pipeline_task = "pipeline_task"
-#     pipeline_kwargs =  "pipeline_kwargs"
-#     is_multilabel="is_multilabel"
-#     labels_preddefined="labels_preddefined"
-#     labels_per_token="labels_per_token"
+from labelatorio.client import EndpointGroup
 
-# class PipelineTasks:
-#     audio_classification = "audio-classification"
-#     automatic_speech_recognition = "automatic-speech-recognition"
-#     conversational = "conversational"
-#     feature_extraction = "feature-extraction"
-#     fill_mask = "fill-mask"
-#     image_classification = "image-classification"
-#     question_answering = "question-answering"
-#     table_question_answering = "table-question-answering"
-#     text2text_generation = "text2text-generation"
-#     text_classification = "text-classification" 
-#     text_generation = "text-generation"
-#     token_classification = "token-classification"
-#     ner  = "ner" # this alias to token-classification
-#     translation = "translation"
-#     translation_xx_to_yy = "translation_xx_to_yy"
-#     summarization = "summarization"
-#     zero_shot_classification = "zero-shot-classification"
+import app.core.error_queue as error_queue
+from app.core.models_cache import TASK_TYPES, ModelsCache
+from app.models.configuration import (ModelSettings, NodeSettings,
+                                      RoutingSetting)
 
-# def get_model_path(model_name_or_id:str):
-#         return os.path.join(MODELS_CACHE_PATH, model_name_or_id.replace("/","_"))
-
-# class TASK_TYPES:
-#     NER="NER"
-#     MULTILABEL_TEXT_CLASSIFICATION="MultiLabelTextClassification"
-#     TEXT_CLASSIFICATION="TextClassification"
-#     TEXT_SIMILARITY="TextSimilarity"
-#     QUESTION_ANWERING="QuestionAnswering"
-#     TEXT_SCORING="TextScoring"
-
-#     def get_options(task_type:str, option_type:str=None):
-#         if task_type==TASK_TYPES.MULTILABEL_TEXT_CLASSIFICATION:
-#             options={
-#                 OptionTypes.pipeline_task:PipelineTasks.text_classification,
-#                 OptionTypes.pipeline_kwargs:{"return_all_scores":True},
-#                 OptionTypes.is_multilabel:True,
-#                 OptionTypes.labels_preddefined:True,
-#                 OptionTypes.labels_per_token:False
-#             }
-#         elif task_type==TASK_TYPES.TEXT_CLASSIFICATION:
-#             options={
-#                 OptionTypes.pipeline_task:PipelineTasks.text_classification,
-#                 OptionTypes.pipeline_kwargs:{"return_all_scores":True},
-#                 OptionTypes.is_multilabel:False,
-#                 OptionTypes.labels_preddefined:True,
-#                 OptionTypes.labels_per_token:False
-#             }
-#         elif task_type==TASK_TYPES.TEXT_SIMILARITY:
-#             options={
-#                 OptionTypes.pipeline_task:None,
-#                 OptionTypes.pipeline_kwargs:None,
-#                 OptionTypes.is_multilabel:False,
-#                 OptionTypes.labels_preddefined:False,
-#                 OptionTypes.labels_per_token:False
-#             }
-#         elif task_type==TASK_TYPES.QUESTION_ANWERING:
-#             options={
-#                 OptionTypes.pipeline_task:PipelineTasks.question_answering,
-#                 OptionTypes.pipeline_kwargs:None,
-#                 OptionTypes.is_multilabel:False,
-#                 OptionTypes.labels_preddefined:False,
-#                 OptionTypes.labels_per_token:False
-#             }
-#         elif task_type==TASK_TYPES.NER:
-#             options={
-#                 OptionTypes.pipeline_task:PipelineTasks.ner,
-#                 OptionTypes.pipeline_kwargs:None,
-#                 OptionTypes.is_multilabel:True,
-#                 OptionTypes.labels_preddefined:True,
-#                 OptionTypes.labels_per_token:True
-#             }
-#         #  elif task_type==TASK_TYPES.TEXT_SCORING:
-#         #     options={
-#         #         OptionTypes.pipeline_task:None,
-#         #         OptionTypes.pipeline_kwargs:None,
-#         #         OptionTypes.is_multilabel:True,
-#         #         OptionTypes.labels_preddefined:True,
-#         #         OptionTypes.labels_per_token:True
-#         #     }
-#         else:
-#             raise Exception(f"Option {task_type} not supported")
-        
-#         if option_type:
-#             return options[option_type]
-#         else:
-#             return options
+from ..config import LABELATORIO_API_TOKEN, LABELATORIO_URL, TEST_MODE
+from ..models.requests import PredictionRequestRecord
+from ..models.responses import (Answer, PredictedItem, Prediction,
+                                PredictionMatchExplanation, RouteExplanation,
+                                SimilarExample)
+from .configuration import NodeConfigurationClient
+from .contants import NodeStatusTypes, RouteHandlingTypes, RouteRuleType
 
 
-
-# MODEL_CACHE_SIZE=1
-
-# MODELS_CACHE_PATH = "models_cache"
 labelatorio_client =Client(LABELATORIO_API_TOKEN, url=LABELATORIO_URL)
 models_cache=ModelsCache(labelatorio_client )
 
@@ -147,7 +45,6 @@ class PredictionModule:
         self.models_cahce=models_cache
 
         self.backlog_queue= persistqueue.SQLiteQueue('queues/backlog_queue', auto_commit=True, multithreading=True)
-        self.errors_queue= persistqueue.SQLiteQueue('queues/error_queue.db', auto_commit=True, multithreading=True)
     
         self.model_anchor_vectors={}
         self.models_paths={}
@@ -222,8 +119,6 @@ class PredictionModule:
             self.configuration_error=repr(ex)
             self.configurationClient.ping(status=NodeStatusTypes.ERROR)
                         
-
-
 
 
 
@@ -684,14 +579,15 @@ class PredictionModule:
                 break
 
             try:
-                #print(f"{project_id}>> {docs}")
-                #print("from backlog: "+str([ item.get("key")  or f'text:{item.get("text")}'  for item in docs]))
                 res = self.labelatorio_client.documents.add_documents(project_id, docs, upsert=True)
-                #print(f"{project_id} << {res}")
+
+                error_queue.retry_errors(
+                    lambda data:  self.labelatorio_client.documents.add_documents(data["project_id"], data["docs"], upsert=True), 
+                    max_retry_counter=1
+                    )
 
             except Exception as ex:
-                self.errors_queue.put({"docs":docs, "project_id":project_id, "error":str(ex), "counter":1, "timestamp":datetime.now(timezone.utc)})
-                print(ex)
+                error_queue.put(docs=docs,project_id=project_id,error_msg=str(ex))
                 logging.exception(ex)
         
         

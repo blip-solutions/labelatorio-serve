@@ -4,3 +4,4 @@ _deployment.md
 .DS_Store
 .vscode
 queues/*
+_*.py
