@@ -8,9 +8,9 @@ class FloatRange(BaseModel):
     
 
 class RoutingSetting(BaseModel):
-    anchors:List[str]
     rule_type:str
     handling:str #manual | model-review | model-auto
+    anchors:Optional[List[str]]=None
     similarity_range:Optional[FloatRange] = None
     predicted_labels:Optional[List[str]] = None
     prediction_score_range:Optional[FloatRange] = None
@@ -48,6 +48,7 @@ class NodeSettings(BaseModel):
     default_model:Optional[str]=None
     models:List[ModelSettings]
     authorization:Optional[NodeAuthorization]
+    version:Optional[str] = None
 
     def get_model_settings(self, model_name) -> ModelSettings:
         return next((model for model in self.models if model.model_name==model_name), None)

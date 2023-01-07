@@ -13,13 +13,14 @@ torch = "1.12.1"
 sentence-transformers = "2.2.2" 
 fastapi-utils = "*"
 fastapi-auth-middleware = "*"
-labelatorio = "==0.2.2"
+labelatorio = "==0.3.5"
 fastapi-oidc = "*"
 install = "*"
 persist-queue = "*"
 gunicorn = "*"
 
 [dev-packages]
+
 
 [requires]
 python_version = "3.9"

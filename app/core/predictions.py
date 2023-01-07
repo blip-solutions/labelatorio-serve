@@ -25,7 +25,7 @@ from ..models.responses import (Answer, PredictedItem, Prediction,
                                 SimilarExample)
 from .configuration import NodeConfigurationClient
 from .contants import NodeStatusTypes, RouteHandlingTypes, RouteRuleType
-
+import logging
 
 labelatorio_client =Client(LABELATORIO_API_TOKEN, url=LABELATORIO_URL)
 models_cache=ModelsCache(labelatorio_client )
@@ -33,7 +33,7 @@ models_cache=ModelsCache(labelatorio_client )
 class PredictionModule:
     def __init__(self, configurationClient:NodeConfigurationClient ) -> None:
         if (torch.cuda.is_available()):
-            print("CUDA availible... using GPU")
+            logging.info("CUDA availible... using GPU")
         
         if not hasattr(self, "settings"): #used by subclasses
             self.settings=None
@@ -50,8 +50,9 @@ class PredictionModule:
         self.models_paths={}
         self.closest =  ClosestNeighbourEndpointGroup(self.labelatorio_client)
         self.memory_cache={}
+        self.initialized=False
         self.reinitialize()
-        self.configuration_error=None
+        
         if self.backlog_queue.size>0:
             logging.warning(f"backlog_queue not empty ({self.backlog_queue.size}). Flushing now!")
             try:
@@ -64,10 +65,10 @@ class PredictionModule:
     
 
     def reinitialize(self):
+        
         if self.configurationClient:
-            self.configurationClient.ping(status=NodeStatusTypes.UPDATING)
             self.settings=self.configurationClient.settings
-             
+
         settings=self.settings
         self.model_anchor_vectors={}
         self.regexes={}
@@ -78,8 +79,10 @@ class PredictionModule:
         gc.collect()
         self.memory_cache={}
         
-        try:
-            if settings and settings.models:
+        if settings and settings.models:
+            try:
+                if self.configurationClient:
+                    self.configurationClient.ping(status=NodeStatusTypes.UPDATING)
                 self.default_model=settings.default_model or settings.models[0].model_name 
                 for modelConfig in settings.models:
                     
@@ -89,20 +92,21 @@ class PredictionModule:
                         self.models_cahce.predownload_model(modelConfig.project_id,modelConfig.similarity_model)
                         
                     elif (modelConfig.routing or modelConfig.default_handling!=RouteHandlingTypes.MODEL_AUTO) :
-                        raise Exception(f"{modelConfig.model_name} :Invalid configuration. No similarity model defined. This is allow only for full auto mode without routing")
+                        raise Exception(f"{modelConfig.model_name}: Invalid configuration. No similarity model defined. This is allow only for full auto mode without routing")
                     
 
-                    print("preparing anchors")
-                    for route_id, route in enumerate(modelConfig.routing):
-                        if route.rule_type==RouteRuleType.ANCHORS:
-                            similarity_model=self.models_cahce.get_similarity_model(modelConfig.project_id, modelConfig.similarity_model)
-                            if self.model_anchor_vectors.get(modelConfig.model_name) is None:
-                                self.model_anchor_vectors[modelConfig.model_name]={}
-                            self.model_anchor_vectors[modelConfig.model_name][route_id] =similarity_model.encode(route.anchors,  normalize_embeddings=True)
-                        if route.regex:
-                            if modelConfig.model_name not in self.regexes:
-                                self.regexes[modelConfig.model_name]={}
-                            self.regexes[modelConfig.model_name][route_id] = re.compile(route.regex)
+                    logging.info("preparing anchors")
+                    if modelConfig.routing:
+                        for route_id, route in enumerate(modelConfig.routing):
+                            if route.rule_type==RouteRuleType.ANCHORS and route.anchors:
+                                similarity_model=self.models_cahce.get_similarity_model(modelConfig.project_id, modelConfig.similarity_model)
+                                if self.model_anchor_vectors.get(modelConfig.model_name) is None:
+                                    self.model_anchor_vectors[modelConfig.model_name]={}
+                                self.model_anchor_vectors[modelConfig.model_name][route_id] =similarity_model.encode(route.anchors,  normalize_embeddings=True)
+                            if route.regex:
+                                if modelConfig.model_name not in self.regexes:
+                                    self.regexes[modelConfig.model_name]={}
+                                self.regexes[modelConfig.model_name][route_id] = re.compile(route.regex)
                 
                 if self.default_model: #preload default models into memory
                     defatult_settings = settings.get_model_settings(self.default_model)
@@ -110,24 +114,27 @@ class PredictionModule:
                     default_similarity_model_settings = next((model for model in settings.models if model.model_name==self.default_model),None)
                     if default_similarity_model_settings:
                         self.models_cahce.get_similarity_model(default_similarity_model_settings.project_id, default_similarity_model_settings.similarity_model)
+                if self.configurationClient:
+                    self.configurationClient.activeConfigVersion = settings.version
+                    self.configurationClient.configuration_error=None
+                    self.configurationClient.ping(status=NodeStatusTypes.READY)
 
-            if self.configurationClient:
-                self.configurationClient.ping(status=NodeStatusTypes.READY)
-            print("Reconfiguraiton ready")
-            #TODO: Delete old paths to save disk space?>>  old_paths
-        except Exception as ex:
-            self.configuration_error=repr(ex)
-            self.configurationClient.ping(status=NodeStatusTypes.ERROR)
+                logging.info("Reconfiguration finished")
+                self.initialized=True
+                #TODO: Delete old paths to save disk space?>>  old_paths
+            except Exception as ex:
+                if self.configurationClient:
+                    self.configurationClient.configuration_error=repr(ex)
+                    self.configurationClient.ping(status=NodeStatusTypes.ERROR, message=str(ex))
+                logging.exception(str(ex))
                         
 
 
 
     def predict_labels(self, background_tasks:BackgroundTasks, data_to_send:Union[List[str], List[PredictionRequestRecord]], model_name:Optional[str], explain:Optional[bool]=None, test:Optional[bool]=False)->PredictedItem:
 
-        if self.configuration_error:
-            raise HTTPException(520,{"error":f"Configuration error: {self.configuration_error}"})
-        if not self.settings.models:
-            raise HTTPException(520,{"error":"No models are defined for this node"})
+        if not self.initialized:
+            raise HTTPException(520,{"error":f"The Node had not been property initialized yet"})
         if not model_name:
             model_name = self.default_model
         
@@ -247,16 +254,18 @@ class PredictionModule:
                         #get vector1
                         max_similarity=None
                         max_sim_anchor_index=None
-                        for anchor_index, anchor_vec in enumerate(self.model_anchor_vectors[model_name][route_id]):
-                            similarity = round((np.dot(query_vectors[i],anchor_vec)+1)/2,3)
-                            
-                            if explain and (not max_similarity or similarity>max_similarity):
-                                max_similarity =similarity
-                                max_sim_anchor_index= anchor_index
+                        anchor_vec =  self.model_anchor_vectors[model_name][route_id]
+                        if anchor_vec is not None:
+                            for anchor_index, anchor_vec in enumerate(self.model_anchor_vectors[model_name][route_id]):
+                                similarity = round((np.dot(query_vectors[i],anchor_vec)+1)/2,3)
+                                
+                                if explain and (not max_similarity or similarity>max_similarity):
+                                    max_similarity =similarity
+                                    max_sim_anchor_index= anchor_index
 
-                            if similarity>=route.similarity_range.min/100 and similarity<=route.similarity_range.max/100:
-                                matched_routes[route_id]= route
-                                break
+                                if similarity>=route.similarity_range.min/100 and similarity<=route.similarity_range.max/100:
+                                    matched_routes[route_id]= route
+                                    break
 
                         if explain:
                             explanations[text2handle][route_id]=RouteExplanation(
@@ -312,6 +321,7 @@ class PredictionModule:
                                 ):
                             text_handled_routes[text] = route
                             break
+                            
                     else:
                         text_handled_routes[text] = route
                         break
@@ -322,30 +332,37 @@ class PredictionModule:
                     route = settings.routing[route_id]
                     
                     if route.prediction_score_range:
-                        
+                        if route.predicted_labels and text in predictions:
+                            predictions_to_test= [prediction for prediction in predictions[text] if prediction["label"] in route.predicted_labels]
+                            
+                        else:
+                            predictions_to_test=predictions.get(text) or []
+                            
                         matched_prediction_score=False
                         prediciton_matches=[]
-                        for prediction in predictions[text]:
-                            matched=(  ((route.predicted_labels and prediction["label"] in route.predicted_labels ) or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  ) 
-                            if matched and  i in matched_closest and route_id in matched_closest[i] :
-                                #if matched and closest to correctly predicted is also part of the matchin, we test also if label is the same as the clossest doc
-                                matched_closest_items= [item for item in matched_closest[i][route_id] if prediction["label"] in item["labels"] ] 
-                            else:
-                                matched_closest_items = []
+                        matched_closest_items=[]
+                        for prediction in predictions_to_test:
+                            matched_prediction =  (  ((route.predicted_labels and prediction["label"] in route.predicted_labels ) or not  route.predicted_labels ) and  prediction["score"]>=(route.prediction_score_range.min or -1000) and  prediction["score"]<=(route.prediction_score_range.max or 1000)  ) 
+                            if matched_prediction and  explanation.matched_similar and i in matched_closest and route_id in matched_closest[i]:
+                                for item in matched_closest[i][route_id]:
+                                    if prediction["label"] in item["labels"]:
+                                        matched_closest_items.append(item)
                             prediciton_matches.append(PredictionMatchExplanation(
                                 prediction=prediction,
-                                matched= matched and len(matched_closest_items)>0
+                                matched= matched_prediction
                             ))
                             
-                            matched_prediction_score=matched_prediction_score or matched
-                        
-                        if matched_closest_items:
+                            matched_prediction_score=matched_prediction_score or matched_prediction
+
+
+                        if matched_closest_items and not explanation.matched_similar_examples:
+                            #do not override examples from anchors
                             explanation.matched_similar_examples=  [SimilarExample(
                                         text=item["text"] , 
                                         score=item["score"],
                                         labels=item["labels"], 
                                         correctly_predicted=item["correctly_predicted"])   for item in matched_closest_items]
-                                     
+                                    
                         explanation.matched_prediction=prediciton_matches
                         
                         explanation.matched = True if matched_prediction_score and explanation.matched_similar else False
@@ -428,8 +445,8 @@ class PredictionModule:
                 
 
     def predict_answer(self, background_tasks:BackgroundTasks, questions:Union[List[str], List[PredictionRequestRecord]], top_k:int=1, model_name:Optional[str]=None, explain:Optional[bool]=None, test:Optional[bool]=False):
-        if self.configuration_error:
-            raise HTTPException(520,{"error":f"Configuration error: {self.configuration_error}"})
+        if not self.initialized:
+            raise HTTPException(520,{"error":f"The Node had not been property initialized yet"})
         # if not self.configurationClient.settings.models:
         #     raise HTTPException(520,{"error":"No models are defined for this node"})
         # if not model_name:

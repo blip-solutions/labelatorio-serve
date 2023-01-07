@@ -8,7 +8,7 @@ from transformers import pipeline
 from huggingface_hub import snapshot_download as hf_download
 from labelatorio import Client
 import gc
-
+import logging
 
 MODEL_CACHE_SIZE=1
 
@@ -65,15 +65,17 @@ class ModelsCache():
         
         self.predownload_model(project_id, model_name_or_id)
         result_model_path= self.models_paths[model_name_or_id] 
-
-        if pipeline_kwrgars is None:
-            pipeline_kwrgars={}
-            return pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
-            
-        else:
-            return pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
+        try:
+            if pipeline_kwrgars is None:
+                pipeline_kwrgars={}
+                return pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
+                
+            else:
+                return pipeline(task=huggingface_pipeline_task, model=result_model_path, **pipeline_kwrgars)   
+        except Exception as ex:
+            logging.exception("Error when trying to load the model into memory")
+            raise ex
         
-       
 
     @concurent_lru_cache()
     def get_similarity_model(self, project_id, model_name_or_id:str ):
@@ -88,8 +90,9 @@ class ModelsCache():
     def predownload_model(self, project_id, model_name):
         model_path = get_model_path(model_name)
         if not os.path.exists(model_path):
+
             print(f"predownload_model {model_name}")
-            if self.labelatorio_client.models.get_info(model_name):
+            if self.labelatorio_client.models.get_info(model_name, project_id=project_id):
                 self.models_paths[model_name] =model_path
                 self.labelatorio_client.models.download(project_id=project_id, model_name_or_id=model_name, target_path=model_path)
             else:
