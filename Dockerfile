@@ -11,6 +11,7 @@ COPY requirements.txt  .
 RUN pip3 install -r requirements.txt
 FROM labelatorio-serving-torch AS labelatorio-serving-requirements
 RUN pip3 install labelatorio==0.3.4
+RUN pip3 install openai
 
 COPY . /app
 EXPOSE 80

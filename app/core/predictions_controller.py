@@ -6,14 +6,14 @@ from .configuration import configuration_client
 from .contants import RouteHandlingTypes
 from .predictions import PredictionModule, TemporaryPredictionModule
 from ..models.requests import PredictRequestBody
-from ..models.responses import PredictctResponse
+from ..models.responses import PredictedResponse
 from starlette.authentication import requires
 from fastapi import Request
 import os
 
 
 
-from ..models.responses import Info, PredictctResponse
+from ..models.responses import Info, PredictedResponse
 
 router = APIRouter()
 
@@ -22,7 +22,7 @@ router = APIRouter()
 
 
 
-@router.post("/predict", response_model=PredictctResponse, response_model_exclude_none=True,
+@router.post("/predict", response_model=PredictedResponse, response_model_exclude_none=True,
     summary="Get predictions for request",
     description="""
     Allows query predictions for one or more texts
@@ -49,7 +49,7 @@ def predict(background_tasks: BackgroundTasks,request: Request, body:PredictRequ
         prediction_module =  request.app.state.prediction_module
 
     result = prediction_module.predict_labels(background_tasks, body.texts, model_name=model_name, explain=explain, test=test)
-    return PredictctResponse(predictions=result)
+    return PredictedResponse(predictions=result)
 
 
 
@@ -67,9 +67,9 @@ def predict(background_tasks: BackgroundTasks,request: Request, body:PredictRequ
 
         
 
-@router.post("/get-answer", response_model=PredictctResponse, response_model_exclude_none=True)
+@router.post("/get-answer", response_model=PredictedResponse, response_model_exclude_none=True)
 @requires(['authenticated'])
 async def get_answer(background_tasks: BackgroundTasks, request: Request,  body:PredictRequestBody, top_k:int=1, explain:Optional[bool]=False, test:Optional[bool]=False)->Info:
     prediction_module:PredictionModule = request.app.state.prediction_module
     result =prediction_module.predict_answer(background_tasks,body.texts, model_name=None, top_k=top_k, explain=explain, test=test)
-    return PredictctResponse(predictions=result)
+    return PredictedResponse(predictions=result)

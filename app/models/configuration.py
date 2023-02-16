@@ -1,4 +1,4 @@
-from typing import List,Optional
+from typing import List,Optional, Dict, Any
 from pydantic import BaseModel
 
 
@@ -48,6 +48,7 @@ class NodeSettings(BaseModel):
     default_model:Optional[str]=None
     models:List[ModelSettings]
     authorization:Optional[NodeAuthorization]
+    extra:Optional[Dict[str,Any]] = None
     version:Optional[str] = None
 
     def get_model_settings(self, model_name) -> ModelSettings:

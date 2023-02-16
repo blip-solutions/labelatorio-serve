@@ -2,7 +2,7 @@ import functools
 import time
 from app.config import MAX_MODELS_IN_CACHE
 from transformers.pipelines import Pipeline
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import os
 from transformers import pipeline
 from huggingface_hub import snapshot_download as hf_download
@@ -19,10 +19,10 @@ def get_model_path(model_name_or_id:str):
         
 
 WAIT_HANDLE={}
-temp_mem_chache={} #this is just to fool lru_cache
+temp_mem_cache={} #this is just to fool lru_cache
 
 
-def concurent_lru_cache(maxsize: int = MAX_MODELS_IN_CACHE or 2):
+def concurrent_lru_cache(maxsize: int = MAX_MODELS_IN_CACHE or 2):
     def wrapper_cache(func):
         func = functools.lru_cache(maxsize=maxsize)(func)
         
@@ -30,14 +30,14 @@ def concurent_lru_cache(maxsize: int = MAX_MODELS_IN_CACHE or 2):
         @functools.wraps(func)
         def wrapped_func(*args, **kwargs):
             cache_key=",".join(str(arg) for arg in args) + "," + ",".join(f"{k}:{v}" for k,v in kwargs.items())
-            if temp_mem_chache.get(cache_key)==WAIT_HANDLE:
+            if temp_mem_cache.get(cache_key)==WAIT_HANDLE:
                 for i in range(60):
                     time.sleep(1)
-                    if temp_mem_chache.get(cache_key)!=WAIT_HANDLE:
+                    if temp_mem_cache.get(cache_key)!=WAIT_HANDLE:
                         break
-            temp_mem_chache[cache_key]=WAIT_HANDLE
+            temp_mem_cache[cache_key]=WAIT_HANDLE
             res= func(*args, **kwargs)
-            temp_mem_chache.pop(cache_key)
+            temp_mem_cache.pop(cache_key)
             return res
 
 
@@ -55,7 +55,7 @@ class ModelsCache():
     def get_pipeline(self, project_id,  model_name_or_id:str, task_type:str )->Pipeline:
         return self._get_pipeline(project_id, model_name_or_id, task_type)
 
-    @concurent_lru_cache()
+    @concurrent_lru_cache()
     def _get_pipeline(self, project_id,  model_name_or_id:str, task_type:str )->Pipeline:
 
         print(f"get_pipeline: {model_name_or_id}")
@@ -77,7 +77,7 @@ class ModelsCache():
             raise ex
         
 
-    @concurent_lru_cache()
+    @concurrent_lru_cache()
     def get_similarity_model(self, project_id, model_name_or_id:str ):
 
         print(f"get_similarity_model: {model_name_or_id}")
@@ -86,6 +86,13 @@ class ModelsCache():
         result_model_path= self.models_paths[model_name_or_id]        
         return SentenceTransformer(result_model_path)
      
+    @concurrent_lru_cache()
+    def get_cross_encoder_model(self, project_id, model_name_or_id:str )->CrossEncoder:
+        print(f"get_cross_enoder_model: {model_name_or_id}")
+        self.predownload_model(project_id, model_name_or_id)
+
+        result_model_path= self.models_paths[model_name_or_id]
+        return CrossEncoder(result_model_path)
 
     def predownload_model(self, project_id, model_name):
         model_path = get_model_path(model_name)
@@ -117,7 +124,7 @@ class ModelsCache():
                         model_path =os.path.join( snapshot_path, snapshosts[0])
                     else:
                         #backup plan...
-                        print(f"no snapshot found... use HF native methogs")
+                        print(f"no snapshot found... use HF native methods")
                         from transformers import AutoConfig, AutoModel
                         model = AutoModel.from_pretrained(model_name,  cache_dir=MODELS_CACHE_PATH)
                         del model
@@ -167,7 +174,7 @@ class TASK_TYPES:
     MULTILABEL_TEXT_CLASSIFICATION="MultiLabelTextClassification"
     TEXT_CLASSIFICATION="TextClassification"
     TEXT_SIMILARITY="TextSimilarity"
-    QUESTION_ANWERING="QuestionAnswering"
+    QUESTION_ANSWERING="QuestionAnswering"
     TEXT_SCORING="TextScoring"
 
     def get_options(task_type:str, option_type:str=None):
@@ -195,7 +202,7 @@ class TASK_TYPES:
                 OptionTypes.labels_preddefined:False,
                 OptionTypes.labels_per_token:False
             }
-        elif task_type==TASK_TYPES.QUESTION_ANWERING:
+        elif task_type==TASK_TYPES.QUESTION_ANSWERING:
             options={
                 OptionTypes.pipeline_task:PipelineTasks.question_answering,
                 OptionTypes.pipeline_kwargs:None,

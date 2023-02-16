@@ -21,7 +21,7 @@ class NodeSettingsEndpointGroup(EndpointGroup[NodeSettings]):
             return NodeSettings(**dictData)
 
     def ping(self,node_name:str, status:Optional[str]=None, message:str=None, current_version:str=None)  -> Union[dict, None]:
-        """Pings Labelator.io and retrieve new config if availible
+        """Pings Labelator.io and retrieve new config if available
         """
         body={
             "status":status,
@@ -50,7 +50,7 @@ class NodeConfigurationClient:
             self.refresh()
             self.ping()  # we need this so heartbeat would be updated on server side
         except Exception as ex:
-            #this happanse in startup... we sont want this to fail,beacsue its probably connection issue... letry try again on next ping
+            #this happens in startup... we dont want this to fail,because its probably connection issue... retry try again on next ping
             self.configuration_error=str(ex)
             logging.exception("Error during client initialization")
 

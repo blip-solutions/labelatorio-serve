@@ -18,9 +18,9 @@ fastapi-oidc = "*"
 install = "*"
 persist-queue = "*"
 gunicorn = "*"
+openai = "*"
 
 [dev-packages]
-
 
 [requires]
 python_version = "3.9"

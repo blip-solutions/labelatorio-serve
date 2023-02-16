@@ -142,7 +142,7 @@ async def root(request:Request):
     return Info(
         info="Labelator.io serving", 
         node_name=configuration_client.node_name,
-        settings=configuration_client.settings if request.user else None, 
+        settings={m.model_name:m for m in configuration_client.settings.models }if request.user and configuration_client.settings else None, 
         version=version,
         root_path=request.scope.get("root_path")
         )
